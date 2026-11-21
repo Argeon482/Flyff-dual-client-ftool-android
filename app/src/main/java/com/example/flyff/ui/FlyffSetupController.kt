@@ -11,8 +11,11 @@ import com.example.flyff.BuffTimerOcrReader
 import com.example.flyff.CharacterHudRegions
 import com.example.flyff.CombatRotationConfig
 import com.example.flyff.CooldownSkillRule
+import com.example.flyff.FlyffBuiltinCatalog
+import com.example.flyff.FlyffIconMatcher
 import com.example.flyff.FlyffMacroCompiler
 import com.example.flyff.FlyffProfile
+import com.example.flyff.FlyffSkillCatalogManager
 import com.example.flyff.FlyffVisionAnalyzer
 import com.example.flyff.HealRuleConfig
 import com.example.flyff.LayoutHudCalibration
@@ -52,7 +55,9 @@ data class PendingSlotDraft(
     val label: String,
     val category: SkillCategory,
     val include: Boolean = true,
-    val iconBitmap: Bitmap
+    val iconBitmap: Bitmap,
+    val autoMatchConfidencePct: Int? = null,
+    val autoMatchSource: String? = null
 ) {
     fun keyBindingPreview(): String {
         val (keyCode, keyLabel) = ScannedSkillKey.keyCodeForSlotIndex(slotIndex)
@@ -78,7 +83,10 @@ data class PendingBuffDraft(
     val detectedTimerRaw: String,
     val include: Boolean = true,
     val fullTileBitmap: Bitmap,
-    val artCropBitmap: Bitmap
+    val artCropBitmap: Bitmap,
+    val autoMatchConfidencePct: Int? = null,
+    val autoMatchSource: String? = null,
+    val matchedSkillKeyId: String? = null
 )
 
 data class LiveVitalReadout(
@@ -106,6 +114,7 @@ data class FlyffSetupUiState(
     val hudPreviewLayout: DualLayoutMode? = null,
     val liveVitalReadouts: Map<WebViewTarget, LiveVitalReadout> = emptyMap(),
     val pendingBuffs: List<PendingBuffDraft> = emptyList(),
+    val stepScrollPositions: Map<Int, Int> = emptyMap(),
     val isBusy: Boolean = false,
     val statusMessage: String? = null,
     val statusIsError: Boolean = false
@@ -122,8 +131,11 @@ class FlyffSetupController(
     private val scope: CoroutineScope,
     initialProfile: FlyffProfile? = null,
     initialStep: Int = 0,
-    initialLayout: DualLayoutMode = DualLayoutMode.SPLIT_50_50
+    initialLayout: DualLayoutMode = DualLayoutMode.SPLIT_50_50,
+    private val catalogManager: FlyffSkillCatalogManager? = null
 ) {
+    private var hasUserEditedProfile: Boolean = initialProfile != null
+
     private val _uiState = MutableStateFlow(
         FlyffSetupUiState(
             stepIndex = initialStep.coerceIn(0, 4),
@@ -133,8 +145,31 @@ class FlyffSetupController(
     )
     val uiState: StateFlow<FlyffSetupUiState> = _uiState.asStateFlow()
 
+    /**
+     * Hydrates the wizard when a saved profile finishes loading asynchronously from Room
+     * (e.g. navigating into AppRoute.FlyffSetup before the flow emits its first list).
+     */
+    fun hydrateProfileIfUnedited(savedProfile: FlyffProfile?) {
+        if (savedProfile == null || hasUserEditedProfile) return
+        hasUserEditedProfile = true
+        _uiState.update { state ->
+            state.copy(
+                profile = savedProfile,
+                selectedHudLayout = savedProfile.layouts.keys.firstOrNull() ?: state.selectedHudLayout
+            )
+        }
+    }
+
     fun setStep(index: Int) {
         _uiState.update { it.copy(stepIndex = index.coerceIn(0, 4), statusMessage = null) }
+    }
+
+    fun updateStepScroll(stepIndex: Int, scrollOffset: Int) {
+        _uiState.update { state ->
+            val current = state.stepScrollPositions[stepIndex]
+            if (current == scrollOffset) state
+            else state.copy(stepScrollPositions = state.stepScrollPositions + (stepIndex to scrollOffset.coerceAtLeast(0)))
+        }
     }
 
     fun clearStatus() {
@@ -142,6 +177,7 @@ class FlyffSetupController(
     }
 
     fun updateProfile(transform: (FlyffProfile) -> FlyffProfile) {
+        hasUserEditedProfile = true
         _uiState.update { it.copy(profile = transform(it.profile).copy(updatedAt = System.currentTimeMillis())) }
     }
 
@@ -184,6 +220,7 @@ class FlyffSetupController(
             _uiState.update { it.copy(isBusy = true, statusMessage = "Scanning 1–0 keybar slots...", statusIsError = false) }
             val currentGroup = _uiState.value.activeKeyBarGroup
             val currentPage = _uiState.value.activeScanPage
+            val catalogEntries = catalogManager?.state?.value?.entries ?: FlyffBuiltinCatalog.entries
 
             val (scannedDrafts, previews) = withContext(Dispatchers.Default) {
                 val panesToScan = resolveVisiblePanes(frame, layoutMode, acct1Rect, acct2Rect, ownerOverride)
@@ -203,8 +240,18 @@ class FlyffSetupController(
                     }
                     scan.detectedSlots.forEach { slot ->
                         val (_, keyNum) = ScannedSkillKey.keyCodeForSlotIndex(slot.slotIndex)
-                        val defaultCat = suggestDefaultCategory(owner, currentGroup, slot.slotIndex)
-                        val defaultLabel = if (owner == WebViewTarget.ACCOUNT_2 && currentGroup == TaskbarGroupKey.MAIN_1_0 && slot.slotIndex == 0) {
+                        val autoMatch = FlyffIconMatcher.identifyTaskbarSkillIcon(
+                            crop = slot.iconBitmap,
+                            catalogEntries = catalogEntries,
+                            owner = owner
+                        )
+                        val defaultCat = autoMatch?.recommendedCategory
+                            ?: suggestDefaultCategory(owner, currentGroup, slot.slotIndex)
+                        val defaultLabel = autoMatch?.label ?: if (
+                            owner == WebViewTarget.ACCOUNT_2 &&
+                            currentGroup == TaskbarGroupKey.MAIN_1_0 &&
+                            slot.slotIndex == 0
+                        ) {
                             "Heal"
                         } else {
                             "${owner.shortLabel} Key $keyNum"
@@ -219,7 +266,9 @@ class FlyffSetupController(
                                 label = defaultLabel,
                                 category = defaultCat,
                                 include = true,
-                                iconBitmap = slot.iconBitmap
+                                iconBitmap = slot.iconBitmap,
+                                autoMatchConfidencePct = autoMatch?.confidencePct,
+                                autoMatchSource = autoMatch?.sourceTag
                             )
                         )
                     }
@@ -231,6 +280,7 @@ class FlyffSetupController(
 
             val oldPending = _uiState.value.pendingSlots
             val oldPreviews = _uiState.value.taskbarPreviews
+            val autoMatchedCount = scannedDrafts.count { it.autoMatchConfidencePct != null }
             _uiState.update {
                 it.copy(
                     pendingSlots = scannedDrafts,
@@ -238,6 +288,8 @@ class FlyffSetupController(
                     isBusy = false,
                     statusMessage = if (scannedDrafts.isEmpty()) {
                         "No occupied 1–0 key slots found. Make sure Flyff is in Original View with skills in the 1–0 bar."
+                    } else if (autoMatchedCount > 0) {
+                        "Cropped ${scannedDrafts.size} slot(s) from ${currentGroup.shortLabel} ($autoMatchedCount auto-identified). Tap Save Slots or Save."
                     } else {
                         "Auto-cropped ${scannedDrafts.size} icon(s) from the ${currentGroup.shortLabel} bar. Label each below and tap Save Slots."
                     },
@@ -289,16 +341,27 @@ class FlyffSetupController(
             }
 
             val allOldPending = _uiState.value.pendingSlots
+            val templatePaths = repository.getTemplatePathMap()
+            hasUserEditedProfile = true
+            var persistedProfile: FlyffProfile? = null
             _uiState.update { state ->
                 val merged = mergeSkillKeys(state.profile.skillKeys, newKeys)
-                val autoWiredProfile = autoWireRulesFromSkills(state.profile.copy(skillKeys = merged))
+                val autoWiredProfile = autoLinkMatchingBuffs(
+                    autoWireRulesFromSkills(state.profile.copy(skillKeys = merged)),
+                    templatePaths = templatePaths
+                ).copy(updatedAt = System.currentTimeMillis())
+                persistedProfile = autoWiredProfile
                 state.copy(
-                    profile = autoWiredProfile.copy(updatedAt = System.currentTimeMillis()),
+                    profile = autoWiredProfile,
                     pendingSlots = emptyList(),
                     isBusy = false,
                     statusMessage = "Saved ${newKeys.size} key(s) to profile (${merged.size} total).",
                     statusIsError = false
                 )
+            }
+            persistedProfile?.let {
+                repository.saveFlyffProfile(it)
+                smartFlyffEngine.updateActiveProfile(it)
             }
             allOldPending.forEach { if (!it.iconBitmap.isRecycled) it.iconBitmap.recycle() }
         }
@@ -363,6 +426,10 @@ class FlyffSetupController(
                 )
             }
 
+            val catalogEntries = catalogManager?.state?.value?.entries ?: FlyffBuiltinCatalog.entries
+            val savedKeys = _uiState.value.profile.skillKeys
+            val templatePaths = repository.getTemplatePathMap()
+
             val result = withContext(Dispatchers.Default) {
                 val panes = resolveVisiblePanes(frame, layoutMode, acct1Rect, acct2Rect, ownerOverride = null)
                 val charHuds = mutableMapOf<WebViewTarget, CharacterHudRegions>()
@@ -378,17 +445,27 @@ class FlyffSetupController(
                     tiles.forEachIndexed { idx, tile ->
                         val reading = timerOcrReader.readTimerFromStrip(tile.timerStripBitmap, cacheKey = null)
                         if (!tile.timerStripBitmap.isRecycled) tile.timerStripBitmap.recycle()
+                        val autoMatch = FlyffIconMatcher.identifyActiveBuffIcon(
+                            fullTileBitmap = tile.fullTileBitmap,
+                            artCropBitmap = tile.artCropBitmap,
+                            catalogEntries = catalogEntries,
+                            savedKeys = savedKeys,
+                            templatePathById = templatePaths
+                        )
                         buffDrafts.add(
                             PendingBuffDraft(
                                 owner = owner,
                                 row = tile.row,
                                 col = tile.col,
-                                label = "Buff ${idx + 1}",
+                                label = autoMatch?.label ?: "Buff ${idx + 1}",
                                 detectedTimerSec = reading.remainingSeconds,
                                 detectedTimerRaw = reading.rawText,
                                 include = true,
                                 fullTileBitmap = tile.fullTileBitmap,
-                                artCropBitmap = tile.artCropBitmap
+                                artCropBitmap = tile.artCropBitmap,
+                                autoMatchConfidencePct = autoMatch?.confidencePct,
+                                autoMatchSource = autoMatch?.sourceTag,
+                                matchedSkillKeyId = autoMatch?.matchedSkillKeyId
                             )
                         )
                     }
@@ -410,6 +487,8 @@ class FlyffSetupController(
             val (calibration, readouts, buffDrafts) = result
             val oldPreview = _uiState.value.hudPreviewBitmap
             val oldBuffs = _uiState.value.pendingBuffs
+            val autoNamed = buffDrafts.count { it.autoMatchConfidencePct != null }
+            hasUserEditedProfile = true
 
             _uiState.update { state ->
                 val updatedLayouts = state.profile.layouts + (layoutMode to calibration)
@@ -424,7 +503,11 @@ class FlyffSetupController(
                     liveVitalReadouts = readouts,
                     pendingBuffs = buffDrafts,
                     isBusy = false,
-                    statusMessage = "Calibrated ${layoutMode.shortLabel} (${calibration.charHuds.size} char HUD, ${buffDrafts.size} active buff icons detected).",
+                    statusMessage = buildString {
+                        append("Calibrated ${layoutMode.shortLabel} (${calibration.charHuds.size} char HUD, ${buffDrafts.size} active buff icon(s)")
+                        if (autoNamed > 0) append(", $autoNamed auto-identified")
+                        append(").")
+                    },
                     statusIsError = false
                 )
             }
@@ -500,6 +583,9 @@ class FlyffSetupController(
 
         scope.launch {
             _uiState.update { it.copy(isBusy = true, statusMessage = "Re-scanning Active Buff Grid...") }
+            val catalogEntries = catalogManager?.state?.value?.entries ?: FlyffBuiltinCatalog.entries
+            val savedKeys = _uiState.value.profile.skillKeys
+            val templatePaths = repository.getTemplatePathMap()
             val buffDrafts = withContext(Dispatchers.Default) {
                 val list = mutableListOf<PendingBuffDraft>()
                 for ((owner, hud) in layoutCal.charHuds) {
@@ -507,17 +593,27 @@ class FlyffSetupController(
                     tiles.forEachIndexed { idx, tile ->
                         val reading = timerOcrReader.readTimerFromStrip(tile.timerStripBitmap, cacheKey = null)
                         if (!tile.timerStripBitmap.isRecycled) tile.timerStripBitmap.recycle()
+                        val autoMatch = FlyffIconMatcher.identifyActiveBuffIcon(
+                            fullTileBitmap = tile.fullTileBitmap,
+                            artCropBitmap = tile.artCropBitmap,
+                            catalogEntries = catalogEntries,
+                            savedKeys = savedKeys,
+                            templatePathById = templatePaths
+                        )
                         list.add(
                             PendingBuffDraft(
                                 owner = owner,
                                 row = tile.row,
                                 col = tile.col,
-                                label = "Buff ${idx + 1}",
+                                label = autoMatch?.label ?: "Buff ${idx + 1}",
                                 detectedTimerSec = reading.remainingSeconds,
                                 detectedTimerRaw = reading.rawText,
                                 include = true,
                                 fullTileBitmap = tile.fullTileBitmap,
-                                artCropBitmap = tile.artCropBitmap
+                                artCropBitmap = tile.artCropBitmap,
+                                autoMatchConfidencePct = autoMatch?.confidencePct,
+                                autoMatchSource = autoMatch?.sourceTag,
+                                matchedSkillKeyId = autoMatch?.matchedSkillKeyId
                             )
                         )
                     }
@@ -525,11 +621,13 @@ class FlyffSetupController(
                 list
             }
             val old = _uiState.value.pendingBuffs
+            val autoNamed = buffDrafts.count { it.autoMatchConfidencePct != null }
             _uiState.update {
                 it.copy(
                     pendingBuffs = buffDrafts,
                     isBusy = false,
-                    statusMessage = "Found ${buffDrafts.size} active buff icon(s) in updated grid."
+                    statusMessage = "Found ${buffDrafts.size} active buff icon(s)" +
+                        if (autoNamed > 0) " ($autoNamed auto-identified)." else " in updated grid."
                 )
             }
             old.forEach {
@@ -556,6 +654,7 @@ class FlyffSetupController(
         scope.launch {
             _uiState.update { it.copy(isBusy = true, statusMessage = "Saving ${selected.size} active buff templates...") }
             val currentBuffs = _uiState.value.profile.activeBuffs.toMutableList()
+            val directVisualMatches = mutableListOf<Pair<String, String>>()
 
             for (draft in selected) {
                 val cleanLabel = draft.label.trim().ifBlank { "Buff" }
@@ -570,33 +669,42 @@ class FlyffSetupController(
                 val existingIdx = currentBuffs.indexOfFirst {
                     it.targetChar == draft.owner && it.label.equals(cleanLabel, ignoreCase = true)
                 }
+                val savedBuffId: String
                 if (existingIdx >= 0) {
                     val existing = currentBuffs[existingIdx]
+                    savedBuffId = existing.id
                     currentBuffs[existingIdx] = existing.copy(
                         perLayoutTemplateIds = existing.perLayoutTemplateIds + (layoutMode to artTpl.id),
                         previewTemplateId = existing.previewTemplateId ?: previewTpl.id,
                         lastDetectedSeconds = draft.detectedTimerSec ?: existing.lastDetectedSeconds
                     )
                 } else {
-                    currentBuffs.add(
-                        ActiveBuffDefinition(
-                            targetChar = draft.owner,
-                            label = cleanLabel,
-                            perLayoutTemplateIds = mapOf(layoutMode to artTpl.id),
-                            previewTemplateId = previewTpl.id,
-                            lastDetectedSeconds = draft.detectedTimerSec
-                        )
+                    val created = ActiveBuffDefinition(
+                        targetChar = draft.owner,
+                        label = cleanLabel,
+                        perLayoutTemplateIds = mapOf(layoutMode to artTpl.id),
+                        previewTemplateId = previewTpl.id,
+                        lastDetectedSeconds = draft.detectedTimerSec
                     )
+                    savedBuffId = created.id
+                    currentBuffs.add(created)
+                }
+                draft.matchedSkillKeyId?.let { keyId ->
+                    directVisualMatches.add(keyId to savedBuffId)
                 }
             }
 
             val allOld = _uiState.value.pendingBuffs
+            val templatePaths = repository.getTemplatePathMap()
+            hasUserEditedProfile = true
+            var persistedProfile: FlyffProfile? = null
             _uiState.update { state ->
                 val withBuffs = state.profile.copy(
                     activeBuffs = currentBuffs,
                     updatedAt = System.currentTimeMillis()
                 )
-                val withAutoLinks = autoLinkMatchingBuffs(withBuffs)
+                val withAutoLinks = autoLinkMatchingBuffs(withBuffs, templatePaths, directVisualMatches)
+                persistedProfile = withAutoLinks
                 state.copy(
                     profile = withAutoLinks,
                     pendingBuffs = emptyList(),
@@ -604,6 +712,10 @@ class FlyffSetupController(
                     statusMessage = "Saved ${selected.size} active buff icon(s) for ${layoutMode.shortLabel} (${withAutoLinks.buffLinks.size} buff link(s) ready).",
                     statusIsError = false
                 )
+            }
+            persistedProfile?.let {
+                repository.saveFlyffProfile(it)
+                smartFlyffEngine.updateActiveProfile(it)
             }
             allOld.forEach {
                 if (!it.fullTileBitmap.isRecycled) it.fullTileBitmap.recycle()
@@ -672,19 +784,25 @@ class FlyffSetupController(
     }
 
     fun autoLinkBuffsByName() {
-        _uiState.update { state ->
-            val before = state.profile.buffLinks.size
-            val updated = autoLinkMatchingBuffs(state.profile)
-            val added = updated.buffLinks.size - before
-            state.copy(
-                profile = updated,
-                statusMessage = if (added > 0) "Auto-linked $added buff pair(s) by name." else "All matching buff names are already linked.",
-                statusIsError = false
-            )
+        scope.launch {
+            val templatePaths = repository.getTemplatePathMap()
+            val updated = withContext(Dispatchers.Default) {
+                autoLinkMatchingBuffs(_uiState.value.profile, templatePaths)
+            }
+            _uiState.update { state ->
+                val before = state.profile.buffLinks.size
+                val added = updated.buffLinks.size - before
+                state.copy(
+                    profile = updated,
+                    statusMessage = if (added > 0) "Auto-linked $added buff pair(s) by name & icon." else "All matching buff pairs are already linked.",
+                    statusIsError = false
+                )
+            }
         }
     }
 
     fun addBuffLink(skillKeyId: String, activeBuffId: String, refreshBelowSec: Int = 90) {
+        hasUserEditedProfile = true
         _uiState.update { state ->
             val existing = state.profile.buffLinks
             if (existing.any { it.skillKeyId == skillKeyId && it.activeBuffId == activeBuffId }) {
@@ -746,18 +864,131 @@ class FlyffSetupController(
         updateCombatConfig { it.copy(cooldownSkills = it.cooldownSkills.filterNot { r -> r.id == ruleId }) }
     }
 
-    fun saveProfile(onSaved: (FlyffProfile) -> Unit = {}) {
-        val current = _uiState.value.profile.copy(
-            name = _uiState.value.profile.name.trim().ifBlank { "Flyff Smart Profile" },
+    /**
+     * Automatically commits any checked pending cropped slots (Step 2) AND checked pending active
+     * buffs (Step 3) into the profile so pressing the bottom Save, Export Macro, or Save & Run
+     * button NEVER discards scanned items.
+     */
+    private suspend fun commitPendingDraftsIntoProfile(layoutMode: DualLayoutMode): FlyffProfile {
+        val snapshot = _uiState.value
+        val checkedSlots = snapshot.pendingSlots.filter { it.include && !it.iconBitmap.isRecycled }
+        val checkedBuffs = snapshot.pendingBuffs.filter {
+            it.include && !it.artCropBitmap.isRecycled && !it.fullTileBitmap.isRecycled
+        }
+
+        var workingProfile = snapshot.profile.copy(
+            name = snapshot.profile.name.trim().ifBlank { "Flyff Smart Profile" },
             updatedAt = System.currentTimeMillis()
         )
+
+        if (checkedSlots.isNotEmpty()) {
+            val newKeys = mutableListOf<ScannedSkillKey>()
+            for (draft in checkedSlots) {
+                val (keyCode, keyLabel) = ScannedSkillKey.keyCodeForSlotIndex(draft.slotIndex)
+                val tpl = repository.saveTemplateBitmap(
+                    name = "${draft.owner.shortLabel}_${draft.label.ifBlank { "Slot$keyLabel" }}",
+                    bitmap = draft.iconBitmap
+                )
+                newKeys.add(
+                    ScannedSkillKey(
+                        owner = draft.owner,
+                        label = draft.label.trim().ifBlank { "Slot $keyLabel" },
+                        category = draft.category,
+                        keyCode = keyCode,
+                        keyLabel = keyLabel,
+                        metaState = draft.groupKey.metaState,
+                        barPage = draft.barPage,
+                        groupKey = draft.groupKey,
+                        slotIndex = draft.slotIndex,
+                        iconTemplateId = tpl.id
+                    )
+                )
+            }
+            val mergedKeys = mergeSkillKeys(workingProfile.skillKeys, newKeys)
+            workingProfile = autoWireRulesFromSkills(workingProfile.copy(skillKeys = mergedKeys))
+        }
+
+        val directVisualMatches = mutableListOf<Pair<String, String>>() // skillKeyId to activeBuffId
+        if (checkedBuffs.isNotEmpty()) {
+            val currentBuffs = workingProfile.activeBuffs.toMutableList()
+            for (draft in checkedBuffs) {
+                val cleanLabel = draft.label.trim().ifBlank { "Buff" }
+                val artTpl = repository.saveTemplateBitmap(
+                    name = "${draft.owner.shortLabel}_${cleanLabel}_${layoutMode.shortLabel}",
+                    bitmap = draft.artCropBitmap
+                )
+                val previewTpl = repository.saveTemplateBitmap(
+                    name = "${draft.owner.shortLabel}_${cleanLabel}_preview",
+                    bitmap = draft.fullTileBitmap
+                )
+                val existingIdx = currentBuffs.indexOfFirst {
+                    it.targetChar == draft.owner && it.label.equals(cleanLabel, ignoreCase = true)
+                }
+                val savedBuffId: String
+                if (existingIdx >= 0) {
+                    val existing = currentBuffs[existingIdx]
+                    savedBuffId = existing.id
+                    currentBuffs[existingIdx] = existing.copy(
+                        perLayoutTemplateIds = existing.perLayoutTemplateIds + (layoutMode to artTpl.id),
+                        previewTemplateId = existing.previewTemplateId ?: previewTpl.id,
+                        lastDetectedSeconds = draft.detectedTimerSec ?: existing.lastDetectedSeconds
+                    )
+                } else {
+                    val created = ActiveBuffDefinition(
+                        targetChar = draft.owner,
+                        label = cleanLabel,
+                        perLayoutTemplateIds = mapOf(layoutMode to artTpl.id),
+                        previewTemplateId = previewTpl.id,
+                        lastDetectedSeconds = draft.detectedTimerSec
+                    )
+                    savedBuffId = created.id
+                    currentBuffs.add(created)
+                }
+                draft.matchedSkillKeyId?.let { keyId ->
+                    directVisualMatches.add(keyId to savedBuffId)
+                }
+            }
+            workingProfile = workingProfile.copy(activeBuffs = currentBuffs)
+        }
+
+        if (checkedSlots.isNotEmpty() || checkedBuffs.isNotEmpty()) {
+            val templatePaths = repository.getTemplatePathMap()
+            workingProfile = autoLinkMatchingBuffs(workingProfile, templatePaths, directVisualMatches)
+        }
+
+        val oldSlots = snapshot.pendingSlots
+        val oldBuffs = snapshot.pendingBuffs
+        hasUserEditedProfile = true
+        _uiState.update { state ->
+            state.copy(
+                profile = workingProfile,
+                pendingSlots = if (checkedSlots.isNotEmpty()) emptyList() else state.pendingSlots,
+                pendingBuffs = if (checkedBuffs.isNotEmpty()) emptyList() else state.pendingBuffs
+            )
+        }
+        if (checkedSlots.isNotEmpty()) {
+            oldSlots.forEach { if (!it.iconBitmap.isRecycled) it.iconBitmap.recycle() }
+        }
+        if (checkedBuffs.isNotEmpty()) {
+            oldBuffs.forEach {
+                if (!it.fullTileBitmap.isRecycled) it.fullTileBitmap.recycle()
+                if (!it.artCropBitmap.isRecycled) it.artCropBitmap.recycle()
+            }
+        }
+        return workingProfile
+    }
+
+    fun saveProfile(onSaved: (FlyffProfile) -> Unit = {}) {
         scope.launch {
+            _uiState.update { it.copy(isBusy = true, statusMessage = "Saving profile...") }
+            val current = commitPendingDraftsIntoProfile(_uiState.value.selectedHudLayout)
             repository.saveFlyffProfile(current)
             smartFlyffEngine.updateActiveProfile(current)
             _uiState.update {
                 it.copy(
                     profile = current,
-                    statusMessage = "Saved profile '${current.name}'.",
+                    isBusy = false,
+                    statusMessage = "Saved '${current.name}' (${current.skillKeys.size} keys · ${current.activeBuffs.size} buffs · ${current.buffLinks.size} links).",
                     statusIsError = false
                 )
             }
@@ -769,21 +1000,21 @@ class FlyffSetupController(
         layoutMode: DualLayoutMode? = null,
         onExported: (MacroDefinition) -> Unit = {}
     ) {
-        val current = _uiState.value.profile.copy(
-            name = _uiState.value.profile.name.trim().ifBlank { "Flyff Smart Profile" },
-            updatedAt = System.currentTimeMillis()
-        )
-        val targetLayout = layoutMode
-            ?: current.layouts.keys.firstOrNull { it == _uiState.value.selectedHudLayout }
-            ?: current.layouts.keys.firstOrNull()
-            ?: DualLayoutMode.SPLIT_50_50
         scope.launch {
+            _uiState.update { it.copy(isBusy = true, statusMessage = "Saving & exporting macro...") }
+            val current = commitPendingDraftsIntoProfile(layoutMode ?: _uiState.value.selectedHudLayout)
+            val targetLayout = layoutMode
+                ?: current.layouts.keys.firstOrNull { it == _uiState.value.selectedHudLayout }
+                ?: current.layouts.keys.firstOrNull()
+                ?: DualLayoutMode.SPLIT_50_50
             repository.saveFlyffProfile(current)
+            smartFlyffEngine.updateActiveProfile(current)
             val macro = FlyffMacroCompiler.compileToMacro(current, targetLayout)
             repository.saveMacro(macro)
             _uiState.update {
                 it.copy(
                     profile = current,
+                    isBusy = false,
                     statusMessage = "Exported '${macro.name}' to Macro Editor (${macro.functions.size} functions).",
                     statusIsError = false
                 )
@@ -929,13 +1160,35 @@ class FlyffSetupController(
         )
     }
 
-    private fun autoLinkMatchingBuffs(profile: FlyffProfile): FlyffProfile {
+    private fun autoLinkMatchingBuffs(
+        profile: FlyffProfile,
+        templatePaths: Map<String, String> = emptyMap(),
+        directVisualMatches: List<Pair<String, String>> = emptyList()
+    ): FlyffProfile {
         val buffKeys = profile.skillKeys.filter {
             it.category == SkillCategory.PARTY_BUFF || it.category == SkillCategory.SELF_BUFF
         }
         val existingLinks = profile.buffLinks.toMutableList()
         var nextPriority = (existingLinks.maxOfOrNull { it.priority } ?: 0) + 10
 
+        // 1. Direct key<->buff matches identified visually during Step 3 capture
+        for ((keyId, buffId) in directVisualMatches) {
+            if (buffKeys.any { it.id == keyId } && profile.activeBuffs.any { it.id == buffId }) {
+                if (existingLinks.none { it.skillKeyId == keyId && it.activeBuffId == buffId }) {
+                    existingLinks.add(
+                        BuffKeyLink(
+                            skillKeyId = keyId,
+                            activeBuffId = buffId,
+                            refreshBelowSec = 90,
+                            priority = nextPriority
+                        )
+                    )
+                    nextPriority += 10
+                }
+            }
+        }
+
+        // 2. Match by label (case-insensitive)
         for (key in buffKeys) {
             val matchingBuff = profile.activeBuffs.firstOrNull { buff ->
                 buff.label.equals(key.label, ignoreCase = true) &&
@@ -955,6 +1208,40 @@ class FlyffSetupController(
                 nextPriority += 10
             }
         }
+
+        // 3. Visual upper-art icon fallback for any unlinked buff keys when template PNGs exist
+        if (templatePaths.isNotEmpty()) {
+            for (key in buffKeys) {
+                if (existingLinks.any { it.skillKeyId == key.id }) continue
+                val keyPath = key.iconTemplateId?.let { templatePaths[it] } ?: continue
+                var bestBuffId: String? = null
+                var bestScore = 0
+                for (buff in profile.activeBuffs) {
+                    if (key.category == SkillCategory.SELF_BUFF && buff.targetChar != key.owner) continue
+                    val buffTplId = buff.previewTemplateId ?: buff.perLayoutTemplateIds.values.firstOrNull() ?: continue
+                    val buffPath = templatePaths[buffTplId] ?: continue
+                    val score = FlyffIconMatcher.compareIconFilesUpperArt(keyPath, buffPath)
+                    if (score > bestScore) {
+                        bestScore = score
+                        bestBuffId = buff.id
+                    }
+                }
+                if (bestBuffId != null && bestScore >= 68 &&
+                    existingLinks.none { it.skillKeyId == key.id && it.activeBuffId == bestBuffId }
+                ) {
+                    existingLinks.add(
+                        BuffKeyLink(
+                            skillKeyId = key.id,
+                            activeBuffId = bestBuffId,
+                            refreshBelowSec = 90,
+                            priority = nextPriority
+                        )
+                    )
+                    nextPriority += 10
+                }
+            }
+        }
+
         return profile.copy(buffLinks = existingLinks)
     }
 }

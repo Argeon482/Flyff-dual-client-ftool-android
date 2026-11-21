@@ -10,6 +10,7 @@ import com.example.dualweb.DualWebConstants
 import com.example.dualweb.DualWebInputBridge
 import com.example.engine.MacroInterpreter
 import com.example.flyff.BuffTimerOcrReader
+import com.example.flyff.FlyffSkillCatalogManager
 import com.example.flyff.SmartFlyffEngine
 import com.example.model.ScriptClipboard
 import com.example.service.OverlayCoordinator
@@ -24,6 +25,8 @@ class ShizuMacroApp : Application() {
     lateinit var screenDetector: ScreenDetector
         private set
     lateinit var buffTimerOcrReader: BuffTimerOcrReader
+        private set
+    lateinit var flyffSkillCatalog: FlyffSkillCatalogManager
         private set
     lateinit var interpreter: MacroInterpreter
         private set
@@ -52,6 +55,9 @@ class ShizuMacroApp : Application() {
         repository = MacroRepository(this, database.macroDao())
         screenDetector = ScreenDetector(this)
         buffTimerOcrReader = BuffTimerOcrReader()
+        flyffSkillCatalog = FlyffSkillCatalogManager(this).apply {
+            initializeAndSyncInBackground()
+        }
         overlayCoordinator = OverlayCoordinator()
         scriptClipboard = ScriptClipboard()
         dualWebInputBridge = DualWebInputBridge()

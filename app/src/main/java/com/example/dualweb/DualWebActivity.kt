@@ -41,11 +41,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Splitscreen
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -767,6 +769,7 @@ private fun DualWebFullscreenWorkspace(
     val smartState by app.smartFlyffEngine.state.collectAsState()
     val screenCaptureActive by app.screenDetector.isActive.collectAsState()
     val overlayState by app.overlayCoordinator.overlayState.collectAsState()
+    val catalogState by app.flyffSkillCatalog.state.collectAsState()
     val coroutineScope = rememberCoroutineScope()
 
     // Keep selected macro synced with Floating Builder's active macro
@@ -791,6 +794,7 @@ private fun DualWebFullscreenWorkspace(
     var showMacroPicker by remember { mutableStateOf(false) }
     var showQuickTypeBar by remember { mutableStateOf(false) }
     var activeWizardController by remember { mutableStateOf<FlyffSetupController?>(null) }
+    var isWizardHidden by remember { mutableStateOf(false) }
     var hideChromeForCapture by remember { mutableStateOf(false) }
     var resetFeedbackMessage by remember { mutableStateOf<String?>(null) }
     var lastTouchedAccount by remember { mutableIntStateOf(1) }
@@ -800,8 +804,18 @@ private fun DualWebFullscreenWorkspace(
     var barOffsetY by remember { mutableFloatStateOf(0f) }
 
     fun openAutoSetupWizard(profileToEdit: FlyffProfile? = null, initialStep: Int = 0) {
-        activeWizardController?.dispose()
+        val existing = activeWizardController
+        if (existing != null && isWizardHidden) {
+            val sameProfile = profileToEdit == null ||
+                profileToEdit.id == existing.uiState.value.profile.id
+            if (sameProfile) {
+                isWizardHidden = false
+                return
+            }
+        }
+        existing?.dispose()
         val target = profileToEdit ?: selectedSmartProfile
+        isWizardHidden = false
         activeWizardController = FlyffSetupController(
             repository = app.repository,
             timerOcrReader = app.buffTimerOcrReader,
@@ -809,7 +823,8 @@ private fun DualWebFullscreenWorkspace(
             scope = coroutineScope,
             initialProfile = target,
             initialStep = initialStep,
-            initialLayout = config.layoutMode
+            initialLayout = config.layoutMode,
+            catalogManager = app.flyffSkillCatalog
         )
     }
 
@@ -817,6 +832,9 @@ private fun DualWebFullscreenWorkspace(
         if (initialOpenSetup && activeWizardController == null) {
             val found = initialSetupProfileId?.let { id -> smartProfiles.firstOrNull { it.id == id } }
             openAutoSetupWizard(profileToEdit = found, initialStep = 0)
+        } else if (initialOpenSetup && initialSetupProfileId != null) {
+            val found = smartProfiles.firstOrNull { it.id == initialSetupProfileId }
+            activeWizardController?.hydrateProfileIfUnedited(found)
         }
     }
 
@@ -830,9 +848,8 @@ private fun DualWebFullscreenWorkspace(
 
     BackHandler {
         when {
-            activeWizardController != null -> {
-                activeWizardController?.dispose()
-                activeWizardController = null
+            activeWizardController != null && !isWizardHidden -> {
+                isWizardHidden = true
             }
             showQuickTypeBar -> showQuickTypeBar = false
             showMacroPicker -> showMacroPicker = false
@@ -1050,8 +1067,8 @@ private fun DualWebFullscreenWorkspace(
                 }
             }
 
-            // Floating Selected Macro Start/Stop Bar (hidden briefly during clean wizard screenshot capture)
-            if (!hideChromeForCapture && activeWizardController == null) {
+            // Floating Selected Macro Start/Stop Bar (visible when wizard is closed OR hidden)
+            if (!hideChromeForCapture && (activeWizardController == null || isWizardHidden)) {
                 val maxDragX = (totalWPx * 0.42f).coerceAtLeast(80f)
                 val maxDragY = (totalHPx * 0.44f).coerceAtLeast(80f)
                 Box(
@@ -1126,14 +1143,57 @@ private fun DualWebFullscreenWorkspace(
                 }
             }
 
-            // Guided Flyff Auto-Setup Wizard Overlay (hides itself for 260ms on capture for pure Flyff screenshots!)
+            // Floating "Resume Setup" pill when Auto-Setup Wizard is hidden so user can inspect the game and jump right back
             val wizardCtrl = activeWizardController
-            if (wizardCtrl != null && !hideChromeForCapture) {
+            if (wizardCtrl != null && isWizardHidden && !hideChromeForCapture) {
+                val wizState by wizardCtrl.uiState.collectAsState()
+                Surface(
+                    onClick = { isWizardHidden = false },
+                    color = SlateSurface.copy(alpha = 0.94f),
+                    shape = RoundedCornerShape(999.dp),
+                    border = BorderStroke(1.5.dp, ElectricCyan),
+                    shadowElevation = 8.dp,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 12.dp)
+                        .height(48.dp)
+                        .zIndex(25f)
+                        .testTag("resume_wizard_pill")
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Visibility,
+                            contentDescription = "Resume Auto-Setup Wizard",
+                            tint = ElectricCyan,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = "Resume Setup · Step ${wizState.stepIndex + 1}",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = ElectricCyan,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
+            // Guided Flyff Auto-Setup Wizard Overlay (hides itself for 260ms on capture for pure Flyff screenshots!)
+            if (wizardCtrl != null && !isWizardHidden && !hideChromeForCapture) {
                 FlyffAutoSetupWizard(
                     controller = wizardCtrl,
                     templates = templates,
                     canLiveCapture = true,
                     screenCaptureActive = screenCaptureActive,
+                    catalogState = catalogState,
+                    onRefreshCatalog = { app.flyffSkillCatalog.refreshNow() },
+                    onProfileSaved = { savedProfile ->
+                        controller.setSelectedFlyffProfileId(savedProfile.id)
+                    },
+                    onHide = { isWizardHidden = true },
                     onRequestScreenCapture = onRequestScreenCapture,
                     onCaptureOriginalView = { ownerOverride ->
                         if (!app.screenDetector.isActive.value) {
@@ -1190,6 +1250,7 @@ private fun DualWebFullscreenWorkspace(
                     onSaveAndRunSmart = { savedProfile ->
                         controller.setSelectedFlyffProfileId(savedProfile.id)
                         controller.setRunSmartProfileMode(true)
+                        isWizardHidden = false
                         wizardCtrl.dispose()
                         activeWizardController = null
                         if (!app.screenDetector.isActive.value) {
@@ -1204,6 +1265,7 @@ private fun DualWebFullscreenWorkspace(
                         app.overlayCoordinator.setLoadedMacro(exportedMacro.id, exportedMacro.name)
                     },
                     onClose = {
+                        isWizardHidden = false
                         wizardCtrl.dispose()
                         activeWizardController = null
                     },

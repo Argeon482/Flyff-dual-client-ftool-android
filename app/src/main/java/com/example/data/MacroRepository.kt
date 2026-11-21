@@ -141,6 +141,10 @@ class MacroRepository(
         BitmapFactory.decodeFile(file.absolutePath)
     }
 
+    suspend fun getTemplatePathMap(): Map<String, String> = withContext(Dispatchers.IO) {
+        macroDao.getAllTemplatesOnce().associate { it.id to it.filePath }
+    }
+
     suspend fun cropTemplate(
         templateId: String,
         trimLeft: Int,

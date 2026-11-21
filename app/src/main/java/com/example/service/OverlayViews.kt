@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.ScreenshotMonitor
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -75,6 +76,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -191,6 +193,24 @@ fun FloatingControlDock(
                     }
                 }
 
+                if (overlayState.isStudioHidden) {
+                    IconButton(
+                        onClick = {
+                            expanded = false
+                            onOpenOverlayStudio()
+                        },
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("dock_resume_studio_btn")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Visibility,
+                            contentDescription = "Resume hidden Studio editor",
+                            tint = StudioEmerald
+                        )
+                    }
+                }
+
                 IconButton(
                     onClick = { expanded = !expanded },
                     modifier = Modifier.size(48.dp)
@@ -303,17 +323,26 @@ fun FloatingControlDock(
                                 onOpenOverlayStudio()
                             },
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = StudioCyan.copy(alpha = 0.2f),
-                                contentColor = StudioCyan
+                                containerColor = if (overlayState.isStudioHidden) StudioEmerald.copy(alpha = 0.25f) else StudioCyan.copy(alpha = 0.2f),
+                                contentColor = if (overlayState.isStudioHidden) StudioEmerald else StudioCyan
                             ),
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier
                                 .weight(1f)
                                 .height(40.dp)
+                                .testTag("dock_studio_btn")
                         ) {
-                            Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Icon(
+                                imageVector = if (overlayState.isStudioHidden) Icons.Default.Visibility else Icons.Default.Edit,
+                                contentDescription = null,
+                                modifier = Modifier.size(15.dp)
+                            )
                             Spacer(Modifier.width(4.dp))
-                            Text("Studio", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = if (overlayState.isStudioHidden) "Resume" else "Studio",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
 
                         IconButton(

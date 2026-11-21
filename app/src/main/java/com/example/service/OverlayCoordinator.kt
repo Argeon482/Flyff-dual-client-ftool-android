@@ -91,8 +91,11 @@ data class OverlayUiState(
     val pendingPickerRequest: PickerRequest? = null,
     val isPickerPassThrough: Boolean = false,
     val showOverlayStudio: Boolean = false,
+    val isStudioHidden: Boolean = false,
     val studioEditingStepId: String? = null,
     val studioActiveFunctionId: String? = null,
+    val studioScrollIndex: Int = 0,
+    val studioScrollOffset: Int = 0,
     val showPinsOverlay: Boolean = false
 )
 
@@ -122,8 +125,11 @@ class OverlayCoordinator {
                 activeMacroId = macroId ?: it.activeMacroId,
                 activeMacroName = macroName ?: it.activeMacroName,
                 showOverlayStudio = if (!showing) false else it.showOverlayStudio,
+                isStudioHidden = if (!showing) false else it.isStudioHidden,
                 studioEditingStepId = if (!showing) null else it.studioEditingStepId,
                 studioActiveFunctionId = if (!showing) null else it.studioActiveFunctionId,
+                studioScrollIndex = if (!showing) 0 else it.studioScrollIndex,
+                studioScrollOffset = if (!showing) 0 else it.studioScrollOffset,
                 showPinsOverlay = if (!showing) false else it.showPinsOverlay
             )
         }
@@ -131,7 +137,50 @@ class OverlayCoordinator {
 
     fun setLoadedMacro(macroId: String, macroName: String) {
         _overlayState.update {
-            it.copy(activeMacroId = macroId, activeMacroName = macroName)
+            val changedMacro = it.activeMacroId != null && it.activeMacroId != macroId
+            it.copy(
+                activeMacroId = macroId,
+                activeMacroName = macroName,
+                studioActiveFunctionId = if (changedMacro) null else it.studioActiveFunctionId,
+                studioEditingStepId = if (changedMacro) null else it.studioEditingStepId,
+                studioScrollIndex = if (changedMacro) 0 else it.studioScrollIndex,
+                studioScrollOffset = if (changedMacro) 0 else it.studioScrollOffset
+            )
+        }
+    }
+
+    fun updateStudioViewport(
+        activeFunctionId: String?,
+        editingStepId: String?,
+        scrollIndex: Int,
+        scrollOffset: Int
+    ) {
+        _overlayState.update {
+            it.copy(
+                studioActiveFunctionId = activeFunctionId,
+                studioEditingStepId = editingStepId,
+                studioScrollIndex = scrollIndex.coerceAtLeast(0),
+                studioScrollOffset = scrollOffset.coerceAtLeast(0)
+            )
+        }
+    }
+
+    fun hideOverlayStudio() {
+        _overlayState.update {
+            it.copy(
+                showOverlayStudio = false,
+                isStudioHidden = true
+            )
+        }
+    }
+
+    fun resumeOverlayStudio() {
+        _overlayState.update {
+            it.copy(
+                showOverlayStudio = true,
+                isStudioHidden = false,
+                showPinsOverlay = false
+            )
         }
     }
 
@@ -143,8 +192,9 @@ class OverlayCoordinator {
         _overlayState.update {
             it.copy(
                 showOverlayStudio = open,
+                isStudioHidden = false,
                 studioEditingStepId = if (open) editingStepId else null,
-                studioActiveFunctionId = if (open) activeFunctionId else it.studioActiveFunctionId,
+                studioActiveFunctionId = if (open) (activeFunctionId ?: it.studioActiveFunctionId) else it.studioActiveFunctionId,
                 showPinsOverlay = if (open) false else it.showPinsOverlay
             )
         }
@@ -155,6 +205,7 @@ class OverlayCoordinator {
             it.copy(
                 showPinsOverlay = open,
                 showOverlayStudio = if (open) false else it.showOverlayStudio,
+                isStudioHidden = if (open) false else it.isStudioHidden,
                 studioEditingStepId = if (open) null else it.studioEditingStepId
             )
         }

@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -50,6 +51,7 @@ import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.ScreenshotMonitor
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
@@ -64,11 +66,16 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -369,6 +376,8 @@ fun OverlayStudioWindow(
     activeMacro: MacroDefinition?,
     initialEditingStepId: String? = null,
     initialActiveFunctionId: String? = null,
+    initialScrollIndex: Int = 0,
+    initialScrollOffset: Int = 0,
     clipboardItem: ScriptClipboardItem? = null,
     templates: List<TemplateAssetEntity>,
     screenCaptureActive: Boolean,
@@ -391,6 +400,8 @@ fun OverlayStudioWindow(
     onOpenPins: () -> Unit,
     onRequestVision: () -> Unit,
     onRunMacro: (MacroDefinition) -> Unit,
+    onViewportChanged: (activeFunctionId: String?, editingStepId: String?, scrollIndex: Int, scrollOffset: Int) -> Unit = { _, _, _, _ -> },
+    onHide: (() -> Unit)? = null,
     onClose: () -> Unit
 ) {
     var activeFunctionId by remember(activeMacro?.id, initialActiveFunctionId) {
@@ -403,6 +414,9 @@ fun OverlayStudioWindow(
     val activeFunction = activeMacro?.functions?.find { it.id == activeFunctionId }
     val currentSteps = activeFunction?.steps ?: activeMacro?.steps.orEmpty()
 
+    var lastScrollIndex by remember(activeMacro?.id) { mutableIntStateOf(initialScrollIndex.coerceAtLeast(0)) }
+    var lastScrollOffset by remember(activeMacro?.id) { mutableIntStateOf(initialScrollOffset.coerceAtLeast(0)) }
+
     var editingStep by remember(activeMacro?.id, initialEditingStepId, initialActiveFunctionId) {
         mutableStateOf(
             if (initialEditingStepId != null) {
@@ -414,6 +428,9 @@ fun OverlayStudioWindow(
                 null
             }
         )
+    }
+    LaunchedEffect(activeMacro?.id, activeFunctionId, editingStep?.id, lastScrollIndex, lastScrollOffset) {
+        onViewportChanged(activeFunctionId, editingStep?.id, lastScrollIndex, lastScrollOffset)
     }
     var croppingTemplate by remember { mutableStateOf<TemplateAssetEntity?>(null) }
     var showAddPanel by remember { mutableStateOf(false) }
@@ -537,6 +554,23 @@ fun OverlayStudioWindow(
                         if (activeMacro != null && croppingTemplate == null && editingStep == null && !showAddPanel && !creatingFunction && !renamingFunction) {
                             IconButton(onClick = { onRunMacro(activeMacro); onClose() }, modifier = Modifier.size(40.dp)) {
                                 Icon(Icons.Default.PlayArrow, contentDescription = "Run", tint = StudioEmerald)
+                            }
+                        }
+                        if (onHide != null) {
+                            IconButton(
+                                onClick = {
+                                    onViewportChanged(activeFunctionId, editingStep?.id, lastScrollIndex, lastScrollOffset)
+                                    onHide()
+                                },
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .testTag("overlay_studio_hide_btn")
+                            ) {
+                                Icon(
+                                    Icons.Default.VisibilityOff,
+                                    contentDescription = "Hide overlay studio and keep position",
+                                    tint = StudioAmber
+                                )
                             }
                         }
                         IconButton(onClick = onClose, modifier = Modifier.size(40.dp)) {
@@ -766,14 +800,26 @@ fun OverlayStudioWindow(
                                 ) {
                                     FilterChip(
                                         selected = activeFunctionId == null,
-                                        onClick = { activeFunctionId = null },
+                                        onClick = {
+                                            if (activeFunctionId != null) {
+                                                activeFunctionId = null
+                                                lastScrollIndex = 0
+                                                lastScrollOffset = 0
+                                            }
+                                        },
                                         label = { Text("Main (${activeMacro.steps.size})", fontSize = 11.sp) },
                                         modifier = Modifier.testTag("overlay_scope_main")
                                     )
                                     activeMacro.functions.forEach { fn ->
                                         FilterChip(
                                             selected = activeFunctionId == fn.id,
-                                            onClick = { activeFunctionId = fn.id },
+                                            onClick = {
+                                                if (activeFunctionId != fn.id) {
+                                                    activeFunctionId = fn.id
+                                                    lastScrollIndex = 0
+                                                    lastScrollOffset = 0
+                                                }
+                                            },
                                             label = {
                                                 Text(
                                                     "fn ${fn.name} (${fn.steps.size})",
@@ -1007,12 +1053,26 @@ fun OverlayStudioWindow(
                                         )
                                     }
                                 } else {
-                                    LazyColumn(
-                                        modifier = Modifier.fillMaxSize(),
-                                        contentPadding = PaddingValues(12.dp),
-                                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        itemsIndexed(currentSteps, key = { _, s -> s.id }) { index, step ->
+                                    key(activeMacro.id, activeFunctionId) {
+                                        val listState = rememberLazyListState(
+                                            initialFirstVisibleItemIndex = lastScrollIndex.coerceIn(0, (currentSteps.size - 1).coerceAtLeast(0)),
+                                            initialFirstVisibleItemScrollOffset = lastScrollOffset.coerceAtLeast(0)
+                                        )
+                                        LaunchedEffect(listState) {
+                                            snapshotFlow {
+                                                listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+                                            }.distinctUntilChanged().collect { (idx, off) ->
+                                                lastScrollIndex = idx
+                                                lastScrollOffset = off
+                                            }
+                                        }
+                                        LazyColumn(
+                                            state = listState,
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentPadding = PaddingValues(12.dp),
+                                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            itemsIndexed(currentSteps, key = { _, s -> s.id }) { index, step ->
                                             val accent = stepAccentColor(step)
                                             Surface(
                                                 color = StudioPanel,
@@ -1060,7 +1120,11 @@ fun OverlayStudioWindow(
                                                     ) {
                                                         if (step is CallFunctionStep && activeMacro.functions.any { it.id == step.functionId }) {
                                                             OutlinedButton(
-                                                                onClick = { activeFunctionId = step.functionId },
+                                                                onClick = {
+                                                                    activeFunctionId = step.functionId
+                                                                    lastScrollIndex = 0
+                                                                    lastScrollOffset = 0
+                                                                },
                                                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                                                                 modifier = Modifier.height(30.dp)
                                                             ) {
@@ -1135,6 +1199,7 @@ fun OverlayStudioWindow(
                                                 }
                                             }
                                         }
+                                    }
                                     }
                                 }
                             }

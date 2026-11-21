@@ -23,10 +23,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Tune
@@ -71,7 +73,7 @@ import com.example.data.TemplateAssetEntity
 import com.example.dualweb.DualLayoutMode
 import com.example.flyff.ActiveBuffDefinition
 import com.example.flyff.BuffTimerOcrReader
-import com.example.flyff.FlyffLabelPresets
+import com.example.flyff.FlyffCatalogState
 import com.example.flyff.LayoutHudCalibration
 import com.example.flyff.RectSpec
 import com.example.model.WebViewTarget
@@ -101,11 +103,14 @@ fun FlyffHudCalibrationStep(
     onReScanBuffGrid: (DualLayoutMode) -> Unit,
     onUpdatePendingBuff: (String, (PendingBuffDraft) -> PendingBuffDraft) -> Unit,
     onCommitPendingBuffs: (DualLayoutMode) -> Unit,
-    onDeleteActiveBuff: (String) -> Unit
+    onDeleteActiveBuff: (String) -> Unit,
+    catalogState: FlyffCatalogState = FlyffCatalogState(),
+    onRefreshCatalog: () -> Unit = {}
 ) {
     val activeLayout = state.selectedHudLayout
     val layoutCal = state.profile.layouts[activeLayout]
     val templateById = remember(templates) { templates.associateBy { it.id } }
+    var catalogPickerBuffId by remember { mutableStateOf<String?>(null) }
 
     var nudgeOwner by remember(activeLayout) {
         mutableStateOf(
@@ -393,7 +398,8 @@ fun FlyffHudCalibrationStep(
                     state.pendingBuffs.forEach { buff ->
                         PendingBuffCard(
                             buff = buff,
-                            onUpdate = { transform -> onUpdatePendingBuff(buff.tempId, transform) }
+                            onUpdate = { transform -> onUpdatePendingBuff(buff.tempId, transform) },
+                            onOpenCatalogPicker = { catalogPickerBuffId = buff.tempId }
                         )
                     }
                 }
@@ -405,6 +411,28 @@ fun FlyffHudCalibrationStep(
             activeBuffs = state.profile.activeBuffs,
             templateById = templateById,
             onDelete = onDeleteActiveBuff
+        )
+    }
+
+    val pickingBuff = catalogPickerBuffId?.let { id -> state.pendingBuffs.firstOrNull { it.tempId == id } }
+    if (pickingBuff != null) {
+        FlyffCatalogPickerDialog(
+            title = "Pick Active Buff (${pickingBuff.owner.shortLabel} · R${pickingBuff.row + 1}C${pickingBuff.col + 1})",
+            catalogState = catalogState,
+            buffsOnlyDefault = true,
+            currentLabel = pickingBuff.label,
+            onRefreshCatalog = onRefreshCatalog,
+            onSelect = { entry ->
+                onUpdatePendingBuff(pickingBuff.tempId) {
+                    it.copy(
+                        label = entry.name,
+                        autoMatchConfidencePct = null,
+                        autoMatchSource = null
+                    )
+                }
+                catalogPickerBuffId = null
+            },
+            onDismiss = { catalogPickerBuffId = null }
         )
     }
 }
@@ -496,7 +524,8 @@ private fun HudOverlayPreviewCard(
 @Composable
 private fun PendingBuffCard(
     buff: PendingBuffDraft,
-    onUpdate: ((PendingBuffDraft) -> PendingBuffDraft) -> Unit
+    onUpdate: ((PendingBuffDraft) -> PendingBuffDraft) -> Unit,
+    onOpenCatalogPicker: () -> Unit
 ) {
     val ownerAccent = if (buff.owner == WebViewTarget.ACCOUNT_1) ElectricCyan else EmeraldRun
     val preview = remember(buff.fullTileBitmap) { buff.fullTileBitmap.asImageBitmap() }
@@ -542,7 +571,8 @@ private fun PendingBuffCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.horizontalScroll(rememberScrollState())
                     ) {
                         Text(
                             text = "${buff.owner.shortLabel} · R${buff.row + 1}C${buff.col + 1}",
@@ -567,42 +597,58 @@ private fun PendingBuffCard(
                                 fontFamily = FontFamily.Monospace
                             )
                         }
+                        if (buff.autoMatchConfidencePct != null) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(EmeraldRun.copy(alpha = 0.16f))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = EmeraldRun, modifier = Modifier.size(11.dp))
+                                Text(
+                                    text = "${buff.autoMatchSource ?: "Auto"} ${buff.autoMatchConfidencePct}%",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = EmeraldRun,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
                     }
-                    OutlinedTextField(
-                        value = buff.label,
-                        onValueChange = { v -> onUpdate { it.copy(label = v) } },
-                        singleLine = true,
-                        label = { Text("Active Buff Name") },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("pending_buff_label_${buff.tempId}")
-                    )
-                }
-            }
-
-            if (buff.include) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                ) {
-                    FlyffLabelPresets.quickBuffLabels.forEach { preset ->
-                        Surface(
-                            onClick = { onUpdate { it.copy(label = preset) } },
-                            color = SlateElevated,
-                            shape = RoundedCornerShape(8.dp),
-                            border = BorderStroke(
-                                1.dp,
-                                if (buff.label.equals(preset, true)) VioletVar else HairlineBorder
-                            )
-                        ) {
-                            Text(
-                                text = preset,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (buff.label.equals(preset, true)) VioletVar else TextSecondary,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
-                            )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        OutlinedTextField(
+                            value = buff.label,
+                            onValueChange = { v -> onUpdate { it.copy(label = v) } },
+                            singleLine = true,
+                            label = { Text("Active Buff Name") },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("pending_buff_label_${buff.tempId}")
+                        )
+                        if (buff.include) {
+                            OutlinedButton(
+                                onClick = onOpenCatalogPicker,
+                                border = BorderStroke(1.dp, VioletVar.copy(alpha = 0.65f)),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                                modifier = Modifier
+                                    .height(48.dp)
+                                    .testTag("pick_buff_catalog_${buff.tempId}")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.MenuBook,
+                                    contentDescription = "Pick buff name from catalog",
+                                    tint = VioletVar,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text("List", color = VioletVar, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                            }
                         }
                     }
                 }

@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.SportsKabaddi
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
@@ -51,11 +52,14 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -70,6 +74,7 @@ import com.example.data.TemplateAssetEntity
 import com.example.dualweb.DualLayoutMode
 import com.example.flyff.BuffKeyLink
 import com.example.flyff.CooldownSkillRule
+import com.example.flyff.FlyffCatalogState
 import com.example.flyff.FlyffProfile
 import com.example.flyff.SkillCategory
 import com.example.flyff.VitalTriggerRule
@@ -111,7 +116,11 @@ fun FlyffAutoSetupWizard(
     onSaveAndRunSmart: (FlyffProfile) -> Unit,
     onExportedToMacro: (MacroDefinition) -> Unit,
     onClose: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    catalogState: FlyffCatalogState = FlyffCatalogState(),
+    onRefreshCatalog: () -> Unit = {},
+    onProfileSaved: (FlyffProfile) -> Unit = {},
+    onHide: (() -> Unit)? = null
 ) {
     val state by controller.uiState.collectAsState()
     val stepTitles = listOf("1. Profile", "2. Keys", "3. HUD & Buffs", "4. Link Buffs", "5. Rules")
@@ -158,13 +167,38 @@ fun FlyffAutoSetupWizard(
                         )
                     }
                 }
-                IconButton(
-                    onClick = onClose,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .testTag("wizard_close_btn")
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Icon(Icons.Default.Close, contentDescription = "Close Auto-Setup Wizard", tint = TextSecondary)
+                    if (onHide != null) {
+                        OutlinedButton(
+                            onClick = onHide,
+                            border = BorderStroke(1.dp, ElectricCyan.copy(alpha = 0.55f)),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                            modifier = Modifier
+                                .height(40.dp)
+                                .testTag("wizard_hide_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.VisibilityOff,
+                                contentDescription = "Hide Wizard and keep exact position",
+                                tint = ElectricCyan,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text("Hide", color = ElectricCyan, style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                    IconButton(
+                        onClick = onClose,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("wizard_close_btn")
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = "Close Auto-Setup Wizard", tint = TextSecondary)
+                    }
                 }
             }
 
@@ -221,71 +255,86 @@ fun FlyffAutoSetupWizard(
                 }
             }
 
-            // Step Body
-            Column(
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 12.dp, vertical = 10.dp)
-            ) {
-                when (state.stepIndex) {
-                    0 -> FlyffProfileIntroStep(
-                        state = state,
-                        screenCaptureActive = screenCaptureActive,
-                        onRequestScreenCapture = onRequestScreenCapture,
-                        onUpdateProfile = { controller.updateProfile(it) },
-                        onNextStep = { controller.setStep(1) }
-                    )
-                    1 -> FlyffKeyScannerStep(
-                        state = state,
-                        templates = templates,
-                        canLiveCapture = canLiveCapture,
-                        onCaptureOriginalView = onCaptureOriginalView,
-                        onSetScanPage = { controller.setActiveScanPage(it) },
-                        onSetKeyBarGroup = { grp -> controller.setActiveKeyBarGroup(grp) },
-                        onUpdatePendingSlot = { id, fn -> controller.updatePendingSlot(id, fn) },
-                        onCommitPendingSlots = { controller.commitPendingSlots() },
-                        onSaveManualKey = { controller.addOrUpdateManualSkillKey(it) },
-                        onDeleteKey = { controller.removeSkillKey(it) }
-                    )
-                    2 -> FlyffHudCalibrationStep(
-                        state = state,
-                        templates = templates,
-                        canLiveCapture = canLiveCapture,
-                        onSelectLayoutMode = { mode ->
-                            controller.setSelectedHudLayout(mode)
-                            onSelectHudLayoutAndSwitchView(mode)
-                        },
-                        onCaptureMobileHud = onCaptureMobileHud,
-                        onNudgeHud = { mode, owner, tgt, dx, dy, dw, dh ->
-                            controller.nudgeHudRegion(mode, owner, tgt, dx, dy, dw, dh)
-                        },
-                        onReScanBuffGrid = { mode -> controller.reScanBuffTilesFromPreview(mode) },
-                        onUpdatePendingBuff = { id, fn -> controller.updatePendingBuff(id, fn) },
-                        onCommitPendingBuffs = { mode -> controller.commitPendingBuffs(mode) },
-                        onDeleteActiveBuff = { controller.removeActiveBuff(it) }
-                    )
-                    3 -> FlyffBuffLinkerStep(
-                        state = state,
-                        onAutoLink = { controller.autoLinkBuffsByName() },
-                        onAddLink = { skillId, buffId, sec -> controller.addBuffLink(skillId, buffId, sec) },
-                        onUpdateLink = { controller.updateBuffLink(it) },
-                        onRemoveLink = { controller.removeBuffLink(it) }
-                    )
-                    4 -> FlyffRulesAndCombatStep(
-                        state = state,
-                        onUpdateHeal = { controller.updateHealRule(it) },
-                        onAddVitalRule = { controller.addVitalTrigger(it) },
-                        onUpdateVitalRule = { controller.updateVitalTrigger(it) },
-                        onRemoveVitalRule = { controller.removeVitalTrigger(it) },
-                        onUpdateCombat = { controller.updateCombatConfig(it) },
-                        onAddCooldownSkill = { controller.addCooldownSkill(it) },
-                        onRemoveCooldownSkill = { controller.removeCooldownSkill(it) }
-                    )
+            // Step Body (preserves exact scroll position per step across Hide/Resume & tab switches)
+            key(state.stepIndex) {
+                val initialScroll = remember(state.stepIndex) {
+                    state.stepScrollPositions[state.stepIndex] ?: 0
                 }
-                Spacer(Modifier.height(16.dp))
+                val bodyScrollState = rememberScrollState(initial = initialScroll)
+                LaunchedEffect(bodyScrollState, state.stepIndex) {
+                    snapshotFlow { bodyScrollState.value }.collect { offset ->
+                        controller.updateStepScroll(state.stepIndex, offset)
+                    }
+                }
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(bodyScrollState)
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                ) {
+                    when (state.stepIndex) {
+                        0 -> FlyffProfileIntroStep(
+                            state = state,
+                            screenCaptureActive = screenCaptureActive,
+                            onRequestScreenCapture = onRequestScreenCapture,
+                            onUpdateProfile = { controller.updateProfile(it) },
+                            onNextStep = { controller.setStep(1) }
+                        )
+                        1 -> FlyffKeyScannerStep(
+                            state = state,
+                            templates = templates,
+                            canLiveCapture = canLiveCapture,
+                            catalogState = catalogState,
+                            onRefreshCatalog = onRefreshCatalog,
+                            onCaptureOriginalView = onCaptureOriginalView,
+                            onSetScanPage = { controller.setActiveScanPage(it) },
+                            onSetKeyBarGroup = { grp -> controller.setActiveKeyBarGroup(grp) },
+                            onUpdatePendingSlot = { id, fn -> controller.updatePendingSlot(id, fn) },
+                            onCommitPendingSlots = { controller.commitPendingSlots() },
+                            onSaveManualKey = { controller.addOrUpdateManualSkillKey(it) },
+                            onDeleteKey = { controller.removeSkillKey(it) }
+                        )
+                        2 -> FlyffHudCalibrationStep(
+                            state = state,
+                            templates = templates,
+                            canLiveCapture = canLiveCapture,
+                            catalogState = catalogState,
+                            onRefreshCatalog = onRefreshCatalog,
+                            onSelectLayoutMode = { mode ->
+                                controller.setSelectedHudLayout(mode)
+                                onSelectHudLayoutAndSwitchView(mode)
+                            },
+                            onCaptureMobileHud = onCaptureMobileHud,
+                            onNudgeHud = { mode, owner, tgt, dx, dy, dw, dh ->
+                                controller.nudgeHudRegion(mode, owner, tgt, dx, dy, dw, dh)
+                            },
+                            onReScanBuffGrid = { mode -> controller.reScanBuffTilesFromPreview(mode) },
+                            onUpdatePendingBuff = { id, fn -> controller.updatePendingBuff(id, fn) },
+                            onCommitPendingBuffs = { mode -> controller.commitPendingBuffs(mode) },
+                            onDeleteActiveBuff = { controller.removeActiveBuff(it) }
+                        )
+                        3 -> FlyffBuffLinkerStep(
+                            state = state,
+                            onAutoLink = { controller.autoLinkBuffsByName() },
+                            onAddLink = { skillId, buffId, sec -> controller.addBuffLink(skillId, buffId, sec) },
+                            onUpdateLink = { controller.updateBuffLink(it) },
+                            onRemoveLink = { controller.removeBuffLink(it) }
+                        )
+                        4 -> FlyffRulesAndCombatStep(
+                            state = state,
+                            onUpdateHeal = { controller.updateHealRule(it) },
+                            onAddVitalRule = { controller.addVitalTrigger(it) },
+                            onUpdateVitalRule = { controller.updateVitalTrigger(it) },
+                            onRemoveVitalRule = { controller.removeVitalTrigger(it) },
+                            onUpdateCombat = { controller.updateCombatConfig(it) },
+                            onAddCooldownSkill = { controller.addCooldownSkill(it) },
+                            onRemoveCooldownSkill = { controller.removeCooldownSkill(it) }
+                        )
+                    }
+                    Spacer(Modifier.height(16.dp))
+                }
             }
 
             // Sticky Bottom Action Bar
@@ -299,7 +348,7 @@ fun FlyffAutoSetupWizard(
                     .padding(horizontal = 12.dp, vertical = 10.dp)
             ) {
                 OutlinedButton(
-                    onClick = { controller.saveProfile() },
+                    onClick = { controller.saveProfile { onProfileSaved(it) } },
                     shape = RoundedCornerShape(10.dp),
                     contentPadding = PaddingValues(horizontal = 10.dp),
                     modifier = Modifier

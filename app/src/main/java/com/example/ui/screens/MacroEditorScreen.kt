@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -39,6 +40,7 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -61,10 +63,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -139,12 +144,17 @@ fun MacroEditorScreen(
         onCropped: (TemplateAssetEntity) -> Unit
     ) -> Unit = { _, _, _, _, _, _, _ -> },
     onExportJson: (MacroDefinition) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    initialActiveFunctionId: String? = null,
+    initialScrollIndex: Int = 0,
+    initialScrollOffset: Int = 0,
+    onViewportChanged: (activeFunctionId: String?, scrollIndex: Int, scrollOffset: Int) -> Unit = { _, _, _ -> },
+    onHideToGame: (() -> Unit)? = null
 ) {
     var showAddStep by remember { mutableStateOf(false) }
     var editingStep by remember { mutableStateOf<MacroStep?>(null) }
     var showMacroSettings by remember { mutableStateOf(false) }
-    var activeFunctionId by remember(macro?.id) { mutableStateOf<String?>(null) }
+    var activeFunctionId by remember(macro?.id) { mutableStateOf(initialActiveFunctionId) }
     var showCreateFunctionDialog by remember { mutableStateOf(false) }
     var renamingFunction by remember { mutableStateOf<MacroFunction?>(null) }
 
@@ -226,6 +236,14 @@ fun MacroEditorScreen(
                     }
                 },
                 actions = {
+                    if (onHideToGame != null) {
+                        IconButton(
+                            onClick = onHideToGame,
+                            modifier = Modifier.testTag("editor_hide_to_game_btn")
+                        ) {
+                            Icon(Icons.Default.VisibilityOff, contentDescription = "Hide editor & view game", tint = ElectricCyan)
+                        }
+                    }
                     IconButton(onClick = { showMacroSettings = true }, modifier = Modifier.testTag("macro_settings_btn")) {
                         Icon(Icons.Default.Tune, contentDescription = "Macro settings", tint = TextPrimary)
                     }
@@ -508,13 +526,28 @@ fun MacroEditorScreen(
                     }
                 }
 
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 96.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    if (displayedSteps.isEmpty()) {
-                        item {
+                key(macro.id, activeFunctionId) {
+                    val useSavedScroll = activeFunctionId == initialActiveFunctionId
+                    val listState = rememberLazyListState(
+                        initialFirstVisibleItemIndex = if (useSavedScroll) initialScrollIndex else 0,
+                        initialFirstVisibleItemScrollOffset = if (useSavedScroll) initialScrollOffset else 0
+                    )
+                    LaunchedEffect(listState, activeFunctionId) {
+                        snapshotFlow {
+                            listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+                        }.collect { (idx, off) ->
+                            onViewportChanged(activeFunctionId, idx, off)
+                        }
+                    }
+
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 96.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (displayedSteps.isEmpty()) {
+                            item {
                             Card(
                                 colors = CardDefaults.cardColors(containerColor = SlateSurface),
                                 border = BorderStroke(1.dp, HairlineBorder),
@@ -593,6 +626,7 @@ fun MacroEditorScreen(
                                 }
                             )
                         }
+                    }
                     }
                 }
             }

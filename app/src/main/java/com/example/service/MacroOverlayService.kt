@@ -280,7 +280,11 @@ class MacroOverlayService : Service() {
                             val macro = ensureActiveMacro()
                             app.overlayCoordinator.setLoadedMacro(macro.id, macro.name)
                             val currentlyOpen = app.overlayCoordinator.overlayState.value.showOverlayStudio
-                            app.overlayCoordinator.setOverlayStudioOpen(!currentlyOpen)
+                            if (currentlyOpen) {
+                                app.overlayCoordinator.hideOverlayStudio()
+                            } else {
+                                app.overlayCoordinator.resumeOverlayStudio()
+                            }
                         }
                     },
                     onOpenApp = { bringMainActivityToFront() },
@@ -397,6 +401,8 @@ class MacroOverlayService : Service() {
                     activeMacro = activeMacro,
                     initialEditingStepId = overlayState.studioEditingStepId,
                     initialActiveFunctionId = overlayState.studioActiveFunctionId,
+                    initialScrollIndex = overlayState.studioScrollIndex,
+                    initialScrollOffset = overlayState.studioScrollOffset,
                     clipboardItem = clipboardItem,
                     templates = templates,
                     screenCaptureActive = captureActive,
@@ -457,6 +463,17 @@ class MacroOverlayService : Service() {
                     onRunMacro = { macro ->
                         app.overlayCoordinator.setLoadedMacro(macro.id, macro.name)
                         app.interpreter.start(macro)
+                    },
+                    onViewportChanged = { fnId, stepId, scrollIdx, scrollOff ->
+                        app.overlayCoordinator.updateStudioViewport(
+                            activeFunctionId = fnId,
+                            editingStepId = stepId,
+                            scrollIndex = scrollIdx,
+                            scrollOffset = scrollOff
+                        )
+                    },
+                    onHide = {
+                        app.overlayCoordinator.hideOverlayStudio()
                     },
                     onClose = {
                         app.overlayCoordinator.setOverlayStudioOpen(false)

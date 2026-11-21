@@ -49,6 +49,12 @@ sealed interface UiNotice {
     data class Message(val text: String, val isError: Boolean = false) : UiNotice
 }
 
+data class MacroEditorViewport(
+    val activeFunctionId: String? = null,
+    val scrollIndex: Int = 0,
+    val scrollOffset: Int = 0
+)
+
 class StudioViewModel(application: Application) : AndroidViewModel(application) {
 
     private val app = application as ShizuMacroApp
@@ -57,8 +63,27 @@ class StudioViewModel(application: Application) : AndroidViewModel(application) 
     val interpreter = app.interpreter
     val smartFlyffEngine = app.smartFlyffEngine
     val buffTimerOcrReader = app.buffTimerOcrReader
+    val flyffSkillCatalog = app.flyffSkillCatalog
     val overlayCoordinator = app.overlayCoordinator
     val scriptClipboard = app.scriptClipboard
+
+    private val editorViewports = mutableMapOf<String, MacroEditorViewport>()
+
+    fun getMacroEditorViewport(macroId: String): MacroEditorViewport =
+        editorViewports[macroId] ?: MacroEditorViewport()
+
+    fun saveMacroEditorViewport(
+        macroId: String,
+        activeFunctionId: String?,
+        scrollIndex: Int,
+        scrollOffset: Int
+    ) {
+        editorViewports[macroId] = MacroEditorViewport(
+            activeFunctionId = activeFunctionId,
+            scrollIndex = scrollIndex.coerceAtLeast(0),
+            scrollOffset = scrollOffset.coerceAtLeast(0)
+        )
+    }
 
     val macros: StateFlow<List<MacroDefinition>> = repository.macros
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())

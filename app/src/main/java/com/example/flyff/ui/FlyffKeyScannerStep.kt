@@ -26,11 +26,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -68,7 +70,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.data.TemplateAssetEntity
-import com.example.flyff.FlyffLabelPresets
+import com.example.flyff.FlyffCatalogState
 import com.example.flyff.ScannedSkillKey
 import com.example.flyff.SkillCategory
 import com.example.flyff.TaskbarGroupKey
@@ -99,11 +101,14 @@ fun FlyffKeyScannerStep(
     onUpdatePendingSlot: (String, (PendingSlotDraft) -> PendingSlotDraft) -> Unit,
     onCommitPendingSlots: () -> Unit,
     onSaveManualKey: (ScannedSkillKey) -> Unit,
-    onDeleteKey: (String) -> Unit
+    onDeleteKey: (String) -> Unit,
+    catalogState: FlyffCatalogState = FlyffCatalogState(),
+    onRefreshCatalog: () -> Unit = {}
 ) {
     var captureOwnerOverride by remember { mutableStateOf<WebViewTarget?>(null) }
     var editingManualKey by remember { mutableStateOf<ScannedSkillKey?>(null) }
     var showAddManualDialog by remember { mutableStateOf(false) }
+    var catalogPickerSlotId by remember { mutableStateOf<String?>(null) }
 
     val templateById = remember(templates) { templates.associateBy { it.id } }
 
@@ -318,7 +323,8 @@ fun FlyffKeyScannerStep(
                     state.pendingSlots.forEach { slot ->
                         PendingSlotCard(
                             slot = slot,
-                            onUpdate = { transform -> onUpdatePendingSlot(slot.tempId, transform) }
+                            onUpdate = { transform -> onUpdatePendingSlot(slot.tempId, transform) },
+                            onOpenCatalogPicker = { catalogPickerSlotId = slot.tempId }
                         )
                     }
                 }
@@ -351,6 +357,8 @@ fun FlyffKeyScannerStep(
     if (showAddManualDialog || editingManualKey != null) {
         ManualSkillKeyDialog(
             existing = editingManualKey,
+            catalogState = catalogState,
+            onRefreshCatalog = onRefreshCatalog,
             onDismiss = {
                 showAddManualDialog = false
                 editingManualKey = null
@@ -362,13 +370,37 @@ fun FlyffKeyScannerStep(
             }
         )
     }
+
+    val pickingSlot = catalogPickerSlotId?.let { id -> state.pendingSlots.firstOrNull { it.tempId == id } }
+    if (pickingSlot != null) {
+        FlyffCatalogPickerDialog(
+            title = "Pick Skill for ${pickingSlot.owner.shortLabel} · ${pickingSlot.keyBindingPreview()}",
+            catalogState = catalogState,
+            buffsOnlyDefault = false,
+            currentLabel = pickingSlot.label,
+            onRefreshCatalog = onRefreshCatalog,
+            onSelect = { entry ->
+                onUpdatePendingSlot(pickingSlot.tempId) {
+                    it.copy(
+                        label = entry.name,
+                        category = entry.recommendedCategory,
+                        autoMatchConfidencePct = null,
+                        autoMatchSource = null
+                    )
+                }
+                catalogPickerSlotId = null
+            },
+            onDismiss = { catalogPickerSlotId = null }
+        )
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun PendingSlotCard(
     slot: PendingSlotDraft,
-    onUpdate: ((PendingSlotDraft) -> PendingSlotDraft) -> Unit
+    onUpdate: ((PendingSlotDraft) -> PendingSlotDraft) -> Unit,
+    onOpenCatalogPicker: () -> Unit
 ) {
     val ownerAccent = if (slot.owner == WebViewTarget.ACCOUNT_1) ElectricCyan else EmeraldRun
     val imgBitmap = remember(slot.iconBitmap) { slot.iconBitmap.asImageBitmap() }
@@ -413,12 +445,31 @@ private fun PendingSlotCard(
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold
                         )
-                        Text(
-                            text = "${slot.iconBitmap.width}×${slot.iconBitmap.height}px",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = TextDim,
-                            fontFamily = FontFamily.Monospace
-                        )
+                        if (slot.autoMatchConfidencePct != null) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(EmeraldRun.copy(alpha = 0.16f))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = EmeraldRun, modifier = Modifier.size(11.dp))
+                                Text(
+                                    text = "${slot.autoMatchSource ?: "Auto"} ${slot.autoMatchConfidencePct}%",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = EmeraldRun,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        } else {
+                            Text(
+                                text = "${slot.iconBitmap.width}×${slot.iconBitmap.height}px",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = TextDim,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
                     }
                     OutlinedTextField(
                         value = slot.label,
@@ -433,47 +484,39 @@ private fun PendingSlotCard(
             }
 
             if (slot.include) {
-                // Quick Category chips
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    SkillCategory.entries.forEach { cat ->
-                        FilterChip(
-                            selected = slot.category == cat,
-                            onClick = { onUpdate { it.copy(category = cat) } },
-                            label = { Text(cat.shortLabel, maxLines = 1) },
-                            modifier = Modifier.height(40.dp)
-                        )
-                    }
-                }
-
-                // 1-Tap Flyff Label Presets
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                ) {
-                    FlyffLabelPresets.quickSkillLabels.forEach { (presetName, presetCat) ->
-                        Surface(
-                            onClick = { onUpdate { it.copy(label = presetName, category = presetCat) } },
-                            color = SlateElevated,
-                            shape = RoundedCornerShape(8.dp),
-                            border = BorderStroke(
-                                1.dp,
-                                if (slot.label.equals(presetName, true)) ElectricCyan else HairlineBorder
-                            )
-                        ) {
-                            Text(
-                                text = presetName,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (slot.label.equals(presetName, true)) ElectricCyan else TextSecondary,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)
+                    // Quick Category chips
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .horizontalScroll(rememberScrollState())
+                    ) {
+                        SkillCategory.entries.forEach { cat ->
+                            FilterChip(
+                                selected = slot.category == cat,
+                                onClick = { onUpdate { it.copy(category = cat) } },
+                                label = { Text(cat.shortLabel, maxLines = 1) },
+                                modifier = Modifier.height(40.dp)
                             )
                         }
+                    }
+                    OutlinedButton(
+                        onClick = onOpenCatalogPicker,
+                        border = BorderStroke(1.dp, ElectricCyan.copy(alpha = 0.55f)),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                        modifier = Modifier
+                            .height(40.dp)
+                            .testTag("pick_slot_catalog_${slot.tempId}")
+                    ) {
+                        Icon(Icons.Default.MenuBook, contentDescription = "Browse Flyff skill catalog", tint = ElectricCyan, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Pick", color = ElectricCyan, style = MaterialTheme.typography.labelSmall, maxLines = 1)
                     }
                 }
             }
@@ -588,6 +631,8 @@ private fun SkillRosterSection(
 @Composable
 private fun ManualSkillKeyDialog(
     existing: ScannedSkillKey?,
+    catalogState: FlyffCatalogState,
+    onRefreshCatalog: () -> Unit,
     onDismiss: () -> Unit,
     onSave: (ScannedSkillKey) -> Unit
 ) {
@@ -597,6 +642,7 @@ private fun ManualSkillKeyDialog(
     var slotIndex by remember(existing) { mutableIntStateOf(existing?.slotIndex ?: 0) }
     var groupKey by remember(existing) { mutableStateOf(existing?.groupKey ?: TaskbarGroupKey.MAIN_1_0) }
     var barPage by remember(existing) { mutableStateOf(existing?.barPage) }
+    var showCatalogPicker by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -632,18 +678,15 @@ private fun ManualSkillKeyDialog(
                     modifier = Modifier.fillMaxWidth().testTag("manual_key_label_input")
                 )
 
-                Text("QUICK PRESETS", style = MaterialTheme.typography.labelSmall, color = TextDim)
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.horizontalScroll(rememberScrollState())
+                OutlinedButton(
+                    onClick = { showCatalogPicker = true },
+                    border = BorderStroke(1.dp, ElectricCyan.copy(alpha = 0.55f)),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth().height(44.dp)
                 ) {
-                    FlyffLabelPresets.quickSkillLabels.take(12).forEach { (presetName, presetCat) ->
-                        FilterChip(
-                            selected = label.equals(presetName, true),
-                            onClick = { label = presetName; category = presetCat },
-                            label = { Text(presetName) }
-                        )
-                    }
+                    Icon(Icons.Default.MenuBook, contentDescription = null, tint = ElectricCyan, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Browse Flyff Skill & Buff List", color = ElectricCyan)
                 }
 
                 Text("CATEGORY", style = MaterialTheme.typography.labelSmall, color = TextDim)
@@ -724,6 +767,22 @@ private fun ManualSkillKeyDialog(
             }
         }
     )
+
+    if (showCatalogPicker) {
+        FlyffCatalogPickerDialog(
+            title = "Flyff Skills & Buffs",
+            catalogState = catalogState,
+            buffsOnlyDefault = false,
+            currentLabel = label,
+            onRefreshCatalog = onRefreshCatalog,
+            onSelect = { entry ->
+                label = entry.name
+                category = entry.recommendedCategory
+                showCatalogPicker = false
+            },
+            onDismiss = { showCatalogPicker = false }
+        )
+    }
 }
 
 @Composable

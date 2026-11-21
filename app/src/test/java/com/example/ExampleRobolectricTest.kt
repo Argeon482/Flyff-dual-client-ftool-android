@@ -20,7 +20,15 @@ import com.example.dualweb.DualWebPreferences
 import com.example.dualweb.WebViewTextInputHelper
 import com.example.engine.ExecutionStatus
 import com.example.engine.MacroInterpreter
+import com.example.flyff.BuffTimerOcrReader
+import com.example.flyff.FlyffIconMatcher
+import com.example.flyff.FlyffProfile
 import com.example.flyff.FlyffVisionAnalyzer
+import com.example.flyff.ScannedSkillKey
+import com.example.flyff.SkillCategory
+import com.example.flyff.SmartFlyffEngine
+import com.example.flyff.TaskbarGroupKey
+import com.example.flyff.ui.FlyffSetupController
 import com.example.model.BranchAction
 import com.example.model.CallFunctionStep
 import com.example.model.IfImageStep
@@ -917,5 +925,280 @@ class ExampleRobolectricTest {
             }
             bmp.recycle()
         }
+    }
+
+    @Test
+    fun overlayCoordinator_hideAndResumeStudioPreservesExactViewportAndFunction() {
+        val coordinator = OverlayCoordinator()
+        coordinator.setOverlayShowing(true, "macro-1", "RM Buffs")
+        coordinator.setOverlayStudioOpen(true, editingStepId = "step-9", activeFunctionId = "fn-buffs")
+        coordinator.updateStudioViewport(
+            activeFunctionId = "fn-buffs",
+            editingStepId = "step-9",
+            scrollIndex = 6,
+            scrollOffset = 128
+        )
+
+        // Hiding Overlay Studio keeps exact function, step, and scroll position
+        coordinator.hideOverlayStudio()
+        val hidden = coordinator.overlayState.value
+        assertFalse(hidden.showOverlayStudio)
+        assertTrue(hidden.isStudioHidden)
+        assertEquals("fn-buffs", hidden.studioActiveFunctionId)
+        assertEquals("step-9", hidden.studioEditingStepId)
+        assertEquals(6, hidden.studioScrollIndex)
+        assertEquals(128, hidden.studioScrollOffset)
+
+        // Resuming returns directly to the exact same function, step, and scroll offset
+        coordinator.resumeOverlayStudio()
+        val resumed = coordinator.overlayState.value
+        assertTrue(resumed.showOverlayStudio)
+        assertFalse(resumed.isStudioHidden)
+        assertEquals("fn-buffs", resumed.studioActiveFunctionId)
+        assertEquals("step-9", resumed.studioEditingStepId)
+        assertEquals(6, resumed.studioScrollIndex)
+        assertEquals(128, resumed.studioScrollOffset)
+
+        // Switching to a different macro cleanly resets viewport state
+        coordinator.setLoadedMacro("macro-2", "Psy Fight")
+        val switched = coordinator.overlayState.value
+        assertEquals("macro-2", switched.activeMacroId)
+        assertNull(switched.studioActiveFunctionId)
+        assertNull(switched.studioEditingStepId)
+        assertEquals(0, switched.studioScrollIndex)
+        assertEquals(0, switched.studioScrollOffset)
+    }
+
+    @Test
+    fun flyffVisionAnalyzer_readsFullHpMpFpAt100PercentAndRejectsPartyBars() {
+        val w = 900
+        val h = 900
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        // Bright snowy world background
+        fillBitmapRect(bmp, 0, 0, w, h, Color.rgb(212, 218, 224))
+
+        // Top-left Mobile HUD panel background
+        fillBitmapRect(bmp, 12, 12, 310, 118, Color.rgb(34, 38, 46))
+        // Portrait square on the left
+        fillBitmapRect(bmp, 18, 18, 102, 108, Color.rgb(130, 110, 95))
+
+        // Full HP, MP, FP bars from x=112..294 with white numeric overlay gap in center
+        val barLeft = 112
+        val barRight = 294
+        // HP bar (red)
+        fillBitmapRect(bmp, barLeft, 36, barRight, 50, Color.rgb(218, 46, 52))
+        fillBitmapRect(bmp, 194, 39, 212, 47, Color.rgb(245, 245, 245)) // "100%" white text gap
+        // Reddish window border accent right of HP (must NOT skew HP width vs MP/FP!)
+        fillBitmapRect(bmp, barRight + 4, 34, barRight + 10, 52, Color.rgb(188, 66, 62))
+        // MP bar (blue)
+        fillBitmapRect(bmp, barLeft, 58, barRight, 72, Color.rgb(42, 138, 232))
+        fillBitmapRect(bmp, 194, 61, 212, 69, Color.rgb(245, 245, 245))
+        // FP bar (green)
+        fillBitmapRect(bmp, barLeft, 80, barRight, 94, Color.rgb(48, 198, 72))
+        fillBitmapRect(bmp, 194, 83, 212, 91, Color.rgb(245, 245, 245))
+
+        // Active buff dark container under HUD with 3 real square icons (36x36, pitch 39)
+        fillBitmapRect(bmp, 16, 124, 152, 174, Color.rgb(28, 30, 36))
+        val buffColors = listOf(
+            Pair(Color.rgb(220, 60, 180), Color.rgb(255, 210, 60)),
+            Pair(Color.rgb(40, 170, 240), Color.rgb(250, 240, 120)),
+            Pair(Color.rgb(230, 110, 40), Color.rgb(80, 230, 210))
+        )
+        buffColors.forEachIndexed { idx, (c1, c2) ->
+            val bx = 20 + idx * 39
+            val by = 128
+            fillBitmapRect(bmp, bx, by, bx + 36, by + 36, Color.rgb(40, 44, 52))
+            fillBitmapRect(bmp, bx + 3, by + 3, bx + 33, by + 20, c1)
+            fillBitmapRect(bmp, bx + 6, by + 8, bx + 30, by + 18, c2)
+            // Bottom green timer text band
+            fillBitmapRect(bmp, bx + 3, by + 23, bx + 33, by + 33, Color.rgb(20, 24, 28))
+            fillBitmapRect(bmp, bx + 7, by + 25, bx + 28, by + 31, Color.rgb(70, 245, 95))
+        }
+
+        // Right-adjacent Party member bar ("eRo...") with thin red HP stripe at top & flat pale lower half
+        val px = 176
+        val py = 128
+        fillBitmapRect(bmp, px, py, px + 140, py + 36, Color.rgb(198, 200, 204))
+        fillBitmapRect(bmp, px + 2, py + 2, px + 136, py + 8, Color.rgb(220, 55, 55))
+
+        val hud = FlyffVisionAnalyzer.autoDetectMobileHudBars(
+            frame = bmp,
+            paneRect = Rect(0, 0, w, h),
+            owner = WebViewTarget.ACCOUNT_1
+        )
+        val hpPct = FlyffVisionAnalyzer.measureBarFillPercent(bmp, hud.hpBar!!)
+        val mpPct = FlyffVisionAnalyzer.measureBarFillPercent(bmp, hud.mpBar!!)
+        val fpPct = FlyffVisionAnalyzer.measureBarFillPercent(bmp, hud.fpBar!!)
+        assertTrue("Full HP bar should read >= 98%, got $hpPct%", hpPct >= 98)
+        assertTrue("Full MP bar should read >= 98%, got $mpPct%", mpPct >= 98)
+        assertTrue("Full FP bar should read >= 98%, got $fpPct%", fpPct >= 98)
+
+        val tiles = FlyffVisionAnalyzer.autoDetectActiveBuffTiles(bmp, hud)
+        assertEquals(
+            "Should detect exactly the 3 real buffs and ignore Party bar; hudBuffGrid=${hud.buffGridRegion.toAndroidRect(w, h)}, tiles=${tiles.map { "r${it.row}c${it.col}:${it.tileBounds}" }}",
+            3,
+            tiles.size
+        )
+        tiles.forEach {
+            assertTrue("Tile must be left of Party bar (x < 170), got ${it.tileBounds.left}", it.tileBounds.right < 172)
+            it.fullTileBitmap.recycle()
+            it.artCropBitmap.recycle()
+            it.timerStripBitmap.recycle()
+        }
+        bmp.recycle()
+    }
+
+    @Test
+    fun flyffIconMatcher_crossMatchesActiveBuffAgainstSavedStep2SkillIcon() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        val repo = MacroRepository(context, db.macroDao())
+
+        // Create two distinct synthetic skill icons (Haste = red/gold flame, Heap Up = cyan/blue shield)
+        val hasteBmp = Bitmap.createBitmap(36, 36, Bitmap.Config.ARGB_8888)
+        fillBitmapRect(hasteBmp, 0, 0, 36, 36, Color.rgb(40, 20, 20))
+        fillBitmapRect(hasteBmp, 4, 4, 32, 32, Color.rgb(235, 72, 38))
+        fillBitmapRect(hasteBmp, 10, 6, 26, 22, Color.rgb(255, 220, 55))
+        val hasteTpl = repo.saveTemplateBitmap("Key Haste", hasteBmp)
+
+        val heapBmp = Bitmap.createBitmap(36, 36, Bitmap.Config.ARGB_8888)
+        fillBitmapRect(heapBmp, 0, 0, 36, 36, Color.rgb(18, 30, 52))
+        fillBitmapRect(heapBmp, 4, 4, 32, 32, Color.rgb(38, 148, 240))
+        fillBitmapRect(heapBmp, 12, 8, 24, 24, Color.rgb(220, 248, 255))
+        val heapTpl = repo.saveTemplateBitmap("Key Heap Up", heapBmp)
+
+        // Simulate an active Haste buff tile with a dark green "19:42" timer band painted over the bottom 38%
+        val activeTile = hasteBmp.copy(Bitmap.Config.ARGB_8888, true)
+        fillBitmapRect(activeTile, 2, 23, 34, 34, Color.rgb(18, 24, 20))
+        fillBitmapRect(activeTile, 6, 25, 30, 32, Color.rgb(64, 245, 92))
+        val artCrop = Bitmap.createBitmap(activeTile, 2, 2, 32, 20)
+
+        val savedKeys = listOf(
+            ScannedSkillKey(
+                id = "k-haste",
+                label = "Haste",
+                category = SkillCategory.PARTY_BUFF,
+                owner = WebViewTarget.ACCOUNT_2,
+                keyCode = KeyEvent.KEYCODE_1,
+                keyLabel = "1",
+                groupKey = TaskbarGroupKey.MAIN_1_0,
+                slotIndex = 0,
+                iconTemplateId = hasteTpl.id
+            ),
+            ScannedSkillKey(
+                id = "k-heap",
+                label = "Heap Up",
+                category = SkillCategory.PARTY_BUFF,
+                owner = WebViewTarget.ACCOUNT_2,
+                keyCode = KeyEvent.KEYCODE_2,
+                keyLabel = "2",
+                groupKey = TaskbarGroupKey.MAIN_1_0,
+                slotIndex = 1,
+                iconTemplateId = heapTpl.id
+            )
+        )
+        val pathMap = repo.getTemplatePathMap()
+        val match = FlyffIconMatcher.identifyActiveBuffIcon(
+            fullTileBitmap = activeTile,
+            artCropBitmap = artCrop,
+            catalogEntries = emptyList(),
+            savedKeys = savedKeys,
+            templatePathById = pathMap
+        )
+
+        assertTrue("Active buff tile should visually match Step 2 Haste key", match != null)
+        assertEquals("Haste", match!!.label)
+        assertEquals("k-haste", match.matchedSkillKeyId)
+        assertTrue("Confidence should be strong (>= 70%), got ${match.confidencePct}%", match.confidencePct >= 70)
+
+        hasteBmp.recycle()
+        heapBmp.recycle()
+        activeTile.recycle()
+        artCrop.recycle()
+        repo.deleteTemplate(hasteTpl.id)
+        repo.deleteTemplate(heapTpl.id)
+        db.close()
+    }
+
+    @Test
+    fun flyffSetupController_saveProfileAutoCommitsPendingSlotsAndRetainsAllData() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        val repo = MacroRepository(context, db.macroDao())
+        val detector = ScreenDetector(context)
+        val bridge = DualWebInputBridge()
+        val ocrReader = BuffTimerOcrReader()
+        val smartEngine = SmartFlyffEngine(repo, detector, bridge, ocrReader)
+        val controller = FlyffSetupController(
+            repository = repo,
+            timerOcrReader = ocrReader,
+            smartFlyffEngine = smartEngine,
+            scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined),
+            initialProfile = FlyffProfile(id = "prof-save-test", name = "My RM + Psy")
+        )
+
+        // Create a synthetic Original View taskbar bitmap with 2 icons (Slot 1 & Slot 2)
+        val w = 1812
+        val h = 1088
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        fillBitmapRect(bmp, 0, 0, w, h, Color.rgb(60, 85, 110))
+        fillBitmapRect(bmp, 0, h - 56, w, h, Color.rgb(180, 130, 95))
+        fillBitmapRect(bmp, 1112, h - 50, 1523, h - 10, Color.rgb(245, 240, 230))
+        val iconTop = h - 49
+        for (slot in 0 until 10) {
+            val sx = (1114f + slot * 41.1f).toInt()
+            if (slot == 0 || slot == 1) {
+                fillBitmapRect(bmp, sx, iconTop, sx + 37, iconTop + 37, Color.rgb(40, 25, 15))
+                fillBitmapRect(
+                    bmp,
+                    sx + 2,
+                    iconTop + 2,
+                    sx + 35,
+                    iconTop + 35,
+                    if (slot == 0) Color.rgb(240, 70, 40) else Color.rgb(40, 175, 240)
+                )
+            } else {
+                fillBitmapRect(bmp, sx + 16, iconTop + 16, sx + 20, iconTop + 20, Color.rgb(175, 170, 165))
+            }
+        }
+
+        // Scan into pendingSlots (user does NOT tap manual Commit before tapping Save!)
+        val fullRect = Rect(0, 0, w, h)
+        controller.processOriginalViewCapture(
+            frame = bmp,
+            layoutMode = DualLayoutMode.SINGLE_ACCT_2,
+            acct1Rect = Rect(),
+            acct2Rect = fullRect
+        )
+        var waitTicks = 0
+        while (controller.uiState.value.isBusy && waitTicks < 40) {
+            delay(50)
+            waitTicks++
+        }
+        assertEquals(2, controller.uiState.value.pendingSlots.size)
+
+        // User taps Save directly — pendingSlots MUST be auto-committed and persisted!
+        var savedProfile: FlyffProfile? = null
+        controller.saveProfile { savedProfile = it }
+        waitTicks = 0
+        while (savedProfile == null && waitTicks < 40) {
+            delay(50)
+            waitTicks++
+        }
+
+        assertTrue("saveProfile callback should fire", savedProfile != null)
+        assertEquals("Saved profile should retain both scanned keys", 2, savedProfile!!.skillKeys.size)
+
+        // Reload fresh from Room to guarantee nothing was lost
+        val reloaded = repo.getFlyffProfile("prof-save-test")!!
+        assertEquals(2, reloaded.skillKeys.size)
+        assertEquals("My RM + Psy", reloaded.name)
+
+        if (!bmp.isRecycled) bmp.recycle()
+        db.close()
     }
 }

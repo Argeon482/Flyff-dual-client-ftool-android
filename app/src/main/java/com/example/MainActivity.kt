@@ -122,6 +122,7 @@ private fun ShizuMacroRoot(
     val captureActive by viewModel.screenCaptureActive.collectAsState()
     val executionState by viewModel.executionState.collectAsState()
     val clipboardItem by viewModel.clipboardItem.collectAsState()
+    val catalogState by viewModel.flyffSkillCatalog.state.collectAsState()
     val coroutineScope = rememberCoroutineScope()
 
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -396,8 +397,12 @@ private fun ShizuMacroRoot(
                                     timerOcrReader = viewModel.buffTimerOcrReader,
                                     smartFlyffEngine = viewModel.smartFlyffEngine,
                                     scope = coroutineScope,
-                                    initialProfile = existingProfile
+                                    initialProfile = existingProfile,
+                                    catalogManager = viewModel.flyffSkillCatalog
                                 )
+                            }
+                            LaunchedEffect(existingProfile) {
+                                wizardCtrl.hydrateProfileIfUnedited(existingProfile)
                             }
                             DisposableEffect(wizardCtrl) {
                                 onDispose { wizardCtrl.dispose() }
@@ -407,6 +412,13 @@ private fun ShizuMacroRoot(
                                 templates = templates,
                                 canLiveCapture = false,
                                 screenCaptureActive = captureActive,
+                                catalogState = catalogState,
+                                onRefreshCatalog = { viewModel.flyffSkillCatalog.refreshNow() },
+                                onHide = {
+                                    context.startActivity(
+                                        DualWebActivity.createIntent(context, startAdjacentSplit = false)
+                                    )
+                                },
                                 onRequestScreenCapture = launchProjectionConsent,
                                 onCaptureOriginalView = {
                                     wizardCtrl.saveProfile { saved ->
@@ -449,11 +461,25 @@ private fun ShizuMacroRoot(
                         composable<AppRoute.MacroEditor> { entry ->
                             val args = entry.toRoute<AppRoute.MacroEditor>()
                             val macro by viewModel.observeMacro(args.macroId).collectAsState(initial = null)
+                            val savedViewport = remember(args.macroId) {
+                                viewModel.getMacroEditorViewport(args.macroId)
+                            }
                             MacroEditorScreen(
                                 macro = macro,
                                 templates = templates,
                                 executionState = executionState,
                                 clipboardItem = clipboardItem,
+                                initialActiveFunctionId = savedViewport.activeFunctionId,
+                                initialScrollIndex = savedViewport.scrollIndex,
+                                initialScrollOffset = savedViewport.scrollOffset,
+                                onViewportChanged = { fnId, idx, off ->
+                                    viewModel.saveMacroEditorViewport(args.macroId, fnId, idx, off)
+                                },
+                                onHideToGame = {
+                                    context.startActivity(
+                                        DualWebActivity.createIntent(context, startAdjacentSplit = false)
+                                    )
+                                },
                                 onBack = { navController.popBackStack() },
                                 onSaveMacro = { updated -> viewModel.saveMacro(updated) },
                                 onCopyStep = { step -> viewModel.scriptClipboard.copyStep(step) },
