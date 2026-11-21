@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "ShizuMacro"
+rootProject.name = "Flyff Ftools"
 
 include(":app")

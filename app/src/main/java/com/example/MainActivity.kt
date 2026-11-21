@@ -207,7 +207,7 @@ private fun ShizuMacroRoot(
     val triggerExport: (MacroDefinition?) -> Unit = { single ->
         pendingExportMacroIds = single?.let { setOf(it.id) }
         val filename = single?.name?.lowercase()?.replace(Regex("[^a-z0-9]+"), "_")?.trim('_')
-            ?.takeIf { it.isNotBlank() } ?: "shizumacro_bundle"
+            ?.takeIf { it.isNotBlank() } ?: "flyff_ftools_bundle"
         exportJsonLauncher.launch("$filename.json")
     }
 

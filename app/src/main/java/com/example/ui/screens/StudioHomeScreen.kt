@@ -146,7 +146,7 @@ fun StudioHomeScreen(
                 title = {
                     Column {
                         Text(
-                            text = "ShizuMacro",
+                            text = "Flyff Ftools",
                             style = MaterialTheme.typography.headlineSmall,
                             color = TextPrimary
                         )
