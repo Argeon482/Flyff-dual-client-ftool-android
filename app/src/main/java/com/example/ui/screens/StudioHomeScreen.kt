@@ -1,0 +1,946 @@
+package com.example.ui.screens
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FileOpen
+import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.RocketLaunch
+import androidx.compose.material.icons.filled.ScreenshotMonitor
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Splitscreen
+import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.material.icons.filled.Web
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import com.example.R
+import com.example.engine.ExecutionStatus
+import com.example.engine.RuntimeExecutionState
+import com.example.flyff.FlyffProfile
+import com.example.model.IfBarPercentStep
+import com.example.model.IfBuffTimerStep
+import com.example.model.IfColorStep
+import com.example.model.IfImageStep
+import com.example.model.LoopStartStep
+import com.example.model.MacroDefinition
+import com.example.ui.theme.AmberLogic
+import com.example.ui.theme.ElectricCyan
+import com.example.ui.theme.EmeraldRun
+import com.example.ui.theme.HairlineBorder
+import com.example.ui.theme.ObsidianBg
+import com.example.ui.theme.RoseAlert
+import com.example.ui.theme.SlateElevated
+import com.example.ui.theme.SlateSurface
+import com.example.ui.theme.SlateWell
+import com.example.ui.theme.TextDim
+import com.example.ui.theme.TextPrimary
+import com.example.ui.theme.TextSecondary
+import com.example.ui.theme.VioletVar
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun StudioHomeScreen(
+    macros: List<MacroDefinition>,
+    flyffProfiles: List<FlyffProfile>,
+    hasOverlayPermission: Boolean,
+    screenCaptureActive: Boolean,
+    executionState: RuntimeExecutionState,
+    onRequestOverlayPermission: () -> Unit,
+    onToggleScreenCapture: () -> Unit,
+    onCreateMacro: (name: String, targetApp: String) -> Unit,
+    onCreateDemoMacro: () -> Unit,
+    onOpenMacro: (String) -> Unit,
+    onLaunchOverlay: (MacroDefinition) -> Unit,
+    onRunMacro: (MacroDefinition) -> Unit,
+    onDuplicateMacro: (String) -> Unit,
+    onDeleteMacro: (String) -> Unit,
+    onImportJson: () -> Unit,
+    onExportAllJson: () -> Unit,
+    onExportSingleJson: (MacroDefinition) -> Unit,
+    onLaunchDualClient: () -> Unit,
+    onLaunchDualSplit: () -> Unit,
+    onStartFlyffAutoSetup: (profileId: String?) -> Unit,
+    onEditFlyffProfile: (profileId: String) -> Unit,
+    onRunFlyffProfileInDual: (profileId: String) -> Unit,
+    onExportFlyffProfileToMacro: (FlyffProfile) -> Unit,
+    onDuplicateFlyffProfile: (String) -> Unit,
+    onDeleteFlyffProfile: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var searchQuery by remember { mutableStateOf("") }
+    var showCreateDialog by remember { mutableStateOf(false) }
+
+    val filteredMacros = remember(macros, searchQuery) {
+        if (searchQuery.isBlank()) macros
+        else macros.filter {
+            it.name.contains(searchQuery, ignoreCase = true) ||
+                it.targetAppLabel.contains(searchQuery, ignoreCase = true)
+        }
+    }
+
+    Scaffold(
+        modifier = modifier.fillMaxSize(),
+        containerColor = ObsidianBg,
+        topBar = {
+            TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = ObsidianBg),
+                title = {
+                    Column {
+                        Text(
+                            text = "ShizuMacro",
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = TextPrimary
+                        )
+                        Text(
+                            text = "DUAL FLYFF MACRO STUDIO",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = ElectricCyan
+                        )
+                    }
+                },
+                actions = {
+                    IconButton(
+                        onClick = onImportJson,
+                        modifier = Modifier.testTag("import_json_button")
+                    ) {
+                        Icon(Icons.Default.FileOpen, contentDescription = "Import JSON", tint = TextPrimary)
+                    }
+                    if (macros.isNotEmpty()) {
+                        IconButton(
+                            onClick = onExportAllJson,
+                            modifier = Modifier.testTag("export_all_json_button")
+                        ) {
+                            Icon(Icons.Default.UploadFile, contentDescription = "Export All JSON", tint = TextPrimary)
+                        }
+                    }
+                }
+            )
+        },
+        floatingActionButton = {
+            ExtendedFloatingActionButton(
+                onClick = { showCreateDialog = true },
+                containerColor = ElectricCyan,
+                contentColor = Color(0xFF04131A),
+                modifier = Modifier.testTag("new_macro_fab")
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("New Macro", fontWeight = FontWeight.Bold)
+            }
+        }
+    ) { innerPadding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
+            contentAlignment = Alignment.TopCenter
+        ) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .widthIn(max = 720.dp),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                item {
+                    DualFlyffLauncherCard(
+                        onLaunchUnifiedFullscreen = onLaunchDualClient,
+                        onLaunchAdjacentSplit = onLaunchDualSplit
+                    )
+                }
+
+                item {
+                    QuickPermissionsStrip(
+                        hasOverlayPermission = hasOverlayPermission,
+                        screenCaptureActive = screenCaptureActive,
+                        onOverlayClick = onRequestOverlayPermission,
+                        onCaptureClick = onToggleScreenCapture
+                    )
+                }
+
+                // Flyff Smart Profiles & Auto-Setup Section
+                item {
+                    FlyffAutoSetupBannerCard(
+                        profileCount = flyffProfiles.size,
+                        onLaunchAutoSetup = { onStartFlyffAutoSetup(null) }
+                    )
+                }
+
+                if (flyffProfiles.isNotEmpty()) {
+                    items(flyffProfiles, key = { "fp_${it.id}" }) { profile ->
+                        FlyffSmartProfileCard(
+                            profile = profile,
+                            onRunInDual = { onRunFlyffProfileInDual(profile.id) },
+                            onOpenWizardOverDual = { onStartFlyffAutoSetup(profile.id) },
+                            onEditProfile = { onEditFlyffProfile(profile.id) },
+                            onExportToMacro = { onExportFlyffProfileToMacro(profile) },
+                            onDuplicate = { onDuplicateFlyffProfile(profile.id) },
+                            onDelete = { onDeleteFlyffProfile(profile.id) }
+                        )
+                    }
+                }
+
+                item {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "MACROS",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = TextSecondary
+                        )
+                        StudioBadgeChip("${macros.size} SAVED", ElectricCyan)
+                    }
+                }
+
+                if (macros.isNotEmpty()) {
+                    item {
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            placeholder = { Text("Search macros...", color = TextDim) },
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = TextDim) },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("macro_search_input")
+                        )
+                    }
+                }
+
+                if (filteredMacros.isEmpty()) {
+                    item {
+                        EmptyStudioHeroCard(
+                            hasAnyMacros = macros.isNotEmpty(),
+                            onCreateMacro = { showCreateDialog = true },
+                            onImportJson = onImportJson,
+                            onCreateDemo = onCreateDemoMacro
+                        )
+                    }
+                } else {
+                    items(filteredMacros, key = { it.id }) { macro ->
+                        val isRunningThis = executionState.activeMacroId == macro.id &&
+                            (executionState.status == ExecutionStatus.RUNNING || executionState.status == ExecutionStatus.PAUSED)
+                        MacroCard(
+                            macro = macro,
+                            isRunning = isRunningThis,
+                            onEdit = { onOpenMacro(macro.id) },
+                            onLaunchDock = { onLaunchOverlay(macro) },
+                            onRunNow = { onRunMacro(macro) },
+                            onDuplicate = { onDuplicateMacro(macro.id) },
+                            onExport = { onExportSingleJson(macro) },
+                            onDelete = { onDeleteMacro(macro.id) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (showCreateDialog) {
+        CreateMacroDialog(
+            onDismiss = { showCreateDialog = false },
+            onConfirm = { name, target ->
+                showCreateDialog = false
+                onCreateMacro(name, target)
+            }
+        )
+    }
+}
+
+@Composable
+private fun DualFlyffLauncherCard(
+    onLaunchUnifiedFullscreen: () -> Unit,
+    onLaunchAdjacentSplit: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = SlateSurface),
+        border = BorderStroke(1.dp, ElectricCyan.copy(alpha = 0.55f)),
+        shape = RoundedCornerShape(18.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(
+                            ElectricCyan.copy(alpha = 0.12f),
+                            EmeraldRun.copy(alpha = 0.06f),
+                            Color.Transparent
+                        )
+                    )
+                )
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Web,
+                        contentDescription = null,
+                        tint = ElectricCyan,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Column {
+                        Text(
+                            text = "Flyff Universe Dual Client",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = TextPrimary
+                        )
+                        Text(
+                            text = "A2 Top (:acct2) • A1 Main Bottom • Direct WebView Input",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = EmeraldRun
+                        )
+                    }
+                }
+                StudioBadgeChip("LIVE", EmeraldRun)
+            }
+
+            Text(
+                text = "Run two isolated accounts simultaneously with separate sessions and send per-step macro taps or keys to either A1 Main or A2 without interrupting your active touches.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextSecondary
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = onLaunchUnifiedFullscreen,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = ElectricCyan,
+                        contentColor = Color(0xFF04131A)
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .weight(1.35f)
+                        .height(48.dp)
+                        .testTag("launch_dual_flyff_btn")
+                ) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Dual Fullscreen", fontWeight = FontWeight.Bold, maxLines = 1)
+                }
+
+                OutlinedButton(
+                    onClick = onLaunchAdjacentSplit,
+                    border = BorderStroke(1.dp, EmeraldRun.copy(alpha = 0.6f)),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp)
+                        .testTag("launch_dual_split_btn")
+                ) {
+                    Icon(Icons.Default.Splitscreen, contentDescription = null, tint = EmeraldRun, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("OS Split", color = TextPrimary, maxLines = 1)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickPermissionsStrip(
+    hasOverlayPermission: Boolean,
+    screenCaptureActive: Boolean,
+    onOverlayClick: () -> Unit,
+    onCaptureClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        PermissionPill(
+            label = "Floating Dock",
+            statusText = if (hasOverlayPermission) "Ready" else "Grant",
+            accent = if (hasOverlayPermission) EmeraldRun else AmberLogic,
+            icon = Icons.Default.Layers,
+            onClick = onOverlayClick,
+            modifier = Modifier
+                .weight(1f)
+                .testTag("diag_overlay_tile")
+        )
+        PermissionPill(
+            label = "Vision Trigger",
+            statusText = if (screenCaptureActive) "Active" else "Off",
+            accent = if (screenCaptureActive) ElectricCyan else TextDim,
+            icon = Icons.Default.ScreenshotMonitor,
+            onClick = onCaptureClick,
+            modifier = Modifier
+                .weight(1f)
+                .testTag("diag_vision_tile")
+        )
+    }
+}
+
+@Composable
+private fun PermissionPill(
+    label: String,
+    statusText: String,
+    accent: Color,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        onClick = onClick,
+        color = SlateWell,
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.38f)),
+        modifier = modifier.height(48.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(icon, contentDescription = label, tint = accent, modifier = Modifier.size(16.dp))
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Text(
+                text = statusText,
+                style = MaterialTheme.typography.labelMedium,
+                color = accent,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+@Composable
+private fun EmptyStudioHeroCard(
+    hasAnyMacros: Boolean,
+    onCreateMacro: () -> Unit,
+    onImportJson: () -> Unit,
+    onCreateDemo: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = SlateSurface),
+        border = BorderStroke(1.dp, HairlineBorder),
+        shape = RoundedCornerShape(18.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(160.dp)
+            ) {
+                Image(
+                    painter = painterResource(id = R.drawable.img_studio_hero),
+                    contentDescription = "Dual Flyff macro automation banner",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.Transparent, SlateSurface.copy(alpha = 0.92f))
+                            )
+                        )
+                )
+                Text(
+                    text = if (hasAnyMacros) "No matching macros" else "Dual-Account Macro Automation",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = TextPrimary,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(16.dp)
+                )
+            }
+
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = if (hasAnyMacros) {
+                        "Adjust your search filter or create a new macro sequence."
+                    } else {
+                        "Build multi-step key, tap, swipe, and pixel/image macros that target A1 Main or A2 independently inside Flyff Universe Dual Client."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TextSecondary
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Button(
+                        onClick = onCreateMacro,
+                        colors = ButtonDefaults.buttonColors(containerColor = ElectricCyan, contentColor = Color(0xFF04131A)),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
+                            .testTag("empty_create_macro_btn")
+                    ) {
+                        Text("Create Macro", fontWeight = FontWeight.Bold)
+                    }
+                    OutlinedButton(
+                        onClick = onImportJson,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
+                            .testTag("empty_import_json_btn")
+                    ) {
+                        Text("Import JSON", color = TextPrimary)
+                    }
+                }
+
+                if (!hasAnyMacros) {
+                    TextButton(
+                        onClick = onCreateDemo,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("load_demo_flow_btn")
+                    ) {
+                        Text("Create Dual Flyff Demo Flow", color = AmberLogic)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MacroCard(
+    macro: MacroDefinition,
+    isRunning: Boolean,
+    onEdit: () -> Unit,
+    onLaunchDock: () -> Unit,
+    onRunNow: () -> Unit,
+    onDuplicate: () -> Unit,
+    onExport: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val hasColor = macro.steps.any { it is IfColorStep } || macro.functions.any { fn -> fn.steps.any { it is IfBarPercentStep } }
+    val hasImage = macro.steps.any { it is IfImageStep } || macro.functions.any { fn -> fn.steps.any { it is IfBuffTimerStep } }
+    val hasLoop = macro.steps.any { it is LoopStartStep }
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = SlateSurface),
+        border = BorderStroke(1.dp, if (isRunning) EmeraldRun else HairlineBorder),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onEdit)
+            .testTag("macro_card_${macro.id}")
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = macro.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = "${macro.targetAppLabel} • ${macro.steps.size} steps • ${if (macro.loopCount <= 0) "∞ loops" else "${macro.loopCount}x"}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextSecondary
+                    )
+                }
+
+                Row {
+                    IconButton(onClick = onDuplicate, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = "Duplicate macro", tint = TextSecondary, modifier = Modifier.size(18.dp))
+                    }
+                    IconButton(onClick = onExport, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.Default.Download, contentDescription = "Export macro JSON", tint = TextSecondary, modifier = Modifier.size(18.dp))
+                    }
+                    IconButton(onClick = onDelete, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.Default.DeleteOutline, contentDescription = "Delete macro", tint = RoseAlert, modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
+
+            if (hasColor || hasImage || hasLoop) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (hasLoop) StudioBadgeChip("LOOP / LOGIC", AmberLogic)
+                    if (hasColor) StudioBadgeChip("COLOR TRIGGER", EmeraldRun)
+                    if (hasImage) StudioBadgeChip("IMAGE MATCH", ElectricCyan)
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onEdit,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp), tint = TextPrimary)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Edit Flow", color = TextPrimary)
+                }
+
+                Button(
+                    onClick = onLaunchDock,
+                    colors = ButtonDefaults.buttonColors(containerColor = SlateElevated, contentColor = ElectricCyan),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Default.RocketLaunch, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Dock", fontWeight = FontWeight.SemiBold)
+                }
+
+                Button(
+                    onClick = onRunNow,
+                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldRun, contentColor = Color(0xFF031911)),
+                    modifier = Modifier.height(48.dp),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = "Run macro now")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FlyffAutoSetupBannerCard(
+    profileCount: Int,
+    onLaunchAutoSetup: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = SlateSurface),
+        border = BorderStroke(1.dp, VioletVar.copy(alpha = 0.55f)),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(
+                            VioletVar.copy(alpha = 0.14f),
+                            ElectricCyan.copy(alpha = 0.06f),
+                            Color.Transparent
+                        )
+                    )
+                )
+                .padding(14.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.Default.AutoFixHigh, contentDescription = null, tint = VioletVar, modifier = Modifier.size(20.dp))
+                    Column {
+                        Text(
+                            text = "Flyff Smart Auto-Setup",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = TextPrimary
+                        )
+                        Text(
+                            text = "Auto-crop Original View keys · Mobile HP/MP/FP · OCR Buff Timers",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TextSecondary
+                        )
+                    }
+                }
+                StudioBadgeChip("$profileCount PROFILES", VioletVar)
+            }
+
+            Button(
+                onClick = onLaunchAutoSetup,
+                colors = ButtonDefaults.buttonColors(containerColor = VioletVar, contentColor = Color.White),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .testTag("home_start_flyff_auto_setup_btn")
+            ) {
+                Icon(Icons.Default.AutoFixHigh, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Launch Auto-Setup Over Dual Flyff", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun FlyffSmartProfileCard(
+    profile: FlyffProfile,
+    onRunInDual: () -> Unit,
+    onOpenWizardOverDual: () -> Unit,
+    onEditProfile: () -> Unit,
+    onExportToMacro: () -> Unit,
+    onDuplicate: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = SlateSurface),
+        border = BorderStroke(1.dp, VioletVar.copy(alpha = 0.42f)),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onEditProfile)
+            .testTag("flyff_profile_card_${profile.id}")
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "⚡ ${profile.name}",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = TextPrimary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = "${profile.skillKeys.size} keys · ${profile.buffLinks.size} linked buffs · ${profile.vitalTriggers.size} pots",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextSecondary
+                    )
+                }
+                Row {
+                    IconButton(onClick = onDuplicate, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = "Duplicate Smart Profile", tint = TextSecondary, modifier = Modifier.size(18.dp))
+                    }
+                    IconButton(onClick = onDelete, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.Default.DeleteOutline, contentDescription = "Delete Smart Profile", tint = RoseAlert, modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                StudioBadgeChip(profile.calibratedLayoutsSummary(), EmeraldRun)
+                if (profile.healRule.enabled) {
+                    StudioBadgeChip("HEAL <${profile.healRule.triggerBelowPct}%", RoseAlert)
+                }
+                if (profile.combatConfig.enabled) {
+                    StudioBadgeChip("COMBAT", AmberLogic)
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onOpenWizardOverDual,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(16.dp), tint = TextPrimary)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Calibrate", color = TextPrimary, maxLines = 1)
+                }
+
+                OutlinedButton(
+                    onClick = onExportToMacro,
+                    border = BorderStroke(1.dp, AmberLogic.copy(alpha = 0.6f)),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Default.Code, contentDescription = null, modifier = Modifier.size(16.dp), tint = AmberLogic)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Export", color = AmberLogic, maxLines = 1)
+                }
+
+                Button(
+                    onClick = onRunInDual,
+                    colors = ButtonDefaults.buttonColors(containerColor = EmeraldRun, contentColor = Color(0xFF031911)),
+                    modifier = Modifier.height(48.dp),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = "Run Smart Profile in Dual Flyff")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun StudioBadgeChip(text: String, accent: Color) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(accent.copy(alpha = 0.14f))
+            .border(1.dp, accent.copy(alpha = 0.4f), RoundedCornerShape(6.dp))
+            .padding(horizontal = 8.dp, vertical = 3.dp)
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = accent
+        )
+    }
+}
+
+@Composable
+private fun CreateMacroDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (name: String, targetApp: String) -> Unit
+) {
+    var name by remember { mutableStateOf("") }
+    var targetApp by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = SlateSurface,
+        title = { Text("Create New Macro", color = TextPrimary) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Macro Name") },
+                    placeholder = { Text("RM Buff + Main Farm") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("create_macro_name_input")
+                )
+                OutlinedTextField(
+                    value = targetApp,
+                    onValueChange = { targetApp = it },
+                    label = { Text("Label (Optional)") },
+                    placeholder = { Text("Dual Flyff") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(name, targetApp) },
+                colors = ButtonDefaults.buttonColors(containerColor = ElectricCyan, contentColor = Color(0xFF04131A)),
+                modifier = Modifier.testTag("create_macro_confirm_btn")
+            ) {
+                Text("Create", fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = TextSecondary)
+            }
+        }
+    )
+}

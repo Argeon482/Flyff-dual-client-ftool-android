@@ -1,0 +1,33 @@
+<resources>
+    <string name="app_name">ShizuMacro</string>
+    <string name="nav_studio">Macros</string>
+    <string name="nav_logs">Console</string>
+    <string name="overlay_service_channel_name">Macro Automation Service</string>
+    <string name="overlay_service_channel_desc">Keeps floating macro controls and screen triggers active.</string>
+    <string name="overlay_notification_title">ShizuMacro Studio Active</string>
+    <string name="overlay_notification_text">Floating automation dock is ready.</string>
+    <string name="action_create_macro">New Macro</string>
+    <string name="action_import_json">Import JSON</string>
+    <string name="action_export_json">Export JSON</string>
+    <string name="dual_flyff_title">Flyff Dual Client</string>
+    <string name="dual_flyff_acct2_title">Flyff Account 2</string>
+    <string name="dual_quick_type_open">Open Quick Type keyboard</string>
+    <string name="dual_quick_type_placeholder">Type chat, login, or amount…</string>
+    <string name="dual_quick_type_send">Send</string>
+    <string name="dual_quick_type_send_enter">Send ↵</string>
+    <string name="dual_quick_type_force_ime">Force IME</string>
+    <string name="dual_quick_type_full_a2">Full A2</string>
+    <string name="dual_ua_keyboard_hint">Desktop UA keeps PC hotbars active (use the Keyboard button on the bar to type in chat/forms). Switch to Mobile UA to let Flyff trigger touch keyboards automatically.</string>
+    <string name="dual_keep_login_reset_desc">Reset keyboard and cache while keeping login</string>
+    <string name="dual_auto_reset_cache_title">Auto safe cache reset on reopen</string>
+    <string name="dual_auto_reset_cache_subtitle">Clears stale WebView cache on launch while keeping login cookies and auto-login.</string>
+    <string name="dual_confirm_clear_title">Log out and clear all data?</string>
+    <string name="dual_confirm_clear_body">This removes all cookies and storage for %1$s, so you will need to sign in again. Use the amber broom icon instead to reset keyboard/cache while staying logged in.</string>
+    <string name="dual_confirm_clear_action">Clear &amp; Log Out</string>
+    <string name="dual_cancel">Cancel</string>
+    <string name="flyff_auto_setup_title">Flyff Auto-Setup Wizard</string>
+    <string name="flyff_smart_profiles_label">Flyff Smart Profiles</string>
+    <string name="flyff_capture_keys_action">Capture &amp; Crop Keys</string>
+    <string name="flyff_capture_hud_action">Capture HUD &amp; Active Buffs</string>
+    <string name="flyff_export_macro_action">Export Macro</string>
+</resources>

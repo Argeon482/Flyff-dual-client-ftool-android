@@ -1,0 +1,1092 @@
+{
+    "schemaVersion": 1,
+    "exportedAt": 1795150089326,
+    "macros": [
+        {
+            "id": "09e23c71-9d08-47f3-95a7-e8e911f99856",
+            "name": "psy fight",
+            "description": "",
+            "targetAppLabel": "Any Screen",
+            "loopCount": 0,
+            "pollingIntervalMs": 200,
+            "injectionMode": "TOUCHSCREEN",
+            "touchGuardPolicy": "OFF",
+            "steps": [
+                {
+                    "type": "call_fn",
+                    "id": "9da6cc43-4ba6-4e8e-9d72-3d43e9b33b82",
+                    "label": "Call check state",
+                    "enabled": true,
+                    "functionId": "039adb92-5dcf-49c2-ae4c-e684ea8b9823",
+                    "functionName": "check state",
+                    "repeatCount": 1
+                },
+                {
+                    "type": "if_var",
+                    "id": "50ac95df-c56a-44cd-bfa3-eda92a2db228",
+                    "label": "If Variable",
+                    "enabled": true,
+                    "variableName": "heal",
+                    "comparator": "EQUALS",
+                    "compareValue": "1",
+                    "thenAction": "CONTINUE_NEXT",
+                    "thenJumpStepId": null,
+                    "elseAction": "SKIP_NEXT",
+                    "elseJumpStepId": null
+                },
+                {
+                    "type": "call_fn",
+                    "id": "d0ef7713-4a8a-4d44-a59b-0306455dd9e9",
+                    "label": "Call heal",
+                    "enabled": true,
+                    "functionId": "26abcb92-33cb-4ba0-9143-8b607aecd1b1",
+                    "functionName": "heal",
+                    "repeatCount": 1
+                },
+                {
+                    "type": "call_fn",
+                    "id": "2af8d3d5-84fd-4c0f-9a7a-abb618cd1099",
+                    "label": "Call buff execute flags",
+                    "enabled": true,
+                    "functionId": "cca955b5-3467-4a2f-992a-c80fd274f4b7",
+                    "functionName": "buff execute flags",
+                    "repeatCount": 1
+                }
+            ],
+            "functions": [
+                {
+                    "id": "26abcb92-33cb-4ba0-9143-8b607aecd1b1",
+                    "name": "heal",
+                    "description": "",
+                    "steps": [
+                        {
+                            "type": "set_var",
+                            "id": "c089ec7d-fd4f-4e2a-ba60-8e394e5f071f",
+                            "label": "Set Variable",
+                            "enabled": true,
+                            "variableName": "checks",
+                            "operation": "SET",
+                            "valueExpression": "0"
+                        },
+                        {
+                            "type": "loop_start",
+                            "id": "cd3fd02d-58f4-40e1-98c0-33282856941b",
+                            "label": "Loop",
+                            "enabled": true,
+                            "iterations": 0,
+                            "conditionVar": "checks",
+                            "conditionOp": "LESS_OR_EQUAL",
+                            "conditionValue": "10"
+                        },
+                        {
+                            "type": "call_fn",
+                            "id": "4c8a199e-341c-4fbd-878a-d14378633559",
+                            "label": "Call attack set flag",
+                            "enabled": true,
+                            "functionId": "e414f3b2-a192-4a40-8b2b-6e6cb1b7115c",
+                            "functionName": "attack set flag",
+                            "repeatCount": 1
+                        },
+                        {
+                            "type": "if_var",
+                            "id": "75a1d66c-23b9-4d09-9405-eb1a75211e42",
+                            "label": "If Variable",
+                            "enabled": true,
+                            "variableName": "attack",
+                            "comparator": "EQUALS",
+                            "compareValue": "1",
+                            "thenAction": "CONTINUE_NEXT",
+                            "thenJumpStepId": null,
+                            "elseAction": "SKIP_NEXT",
+                            "elseJumpStepId": null
+                        },
+                        {
+                            "type": "call_fn",
+                            "id": "1f0bca96-91a5-461f-801e-3104c861b2e6",
+                            "label": "Call attack",
+                            "enabled": true,
+                            "functionId": "4729ed8a-5ac0-4cfe-b273-2551af1b1b44",
+                            "functionName": "attack",
+                            "repeatCount": 1
+                        },
+                        {
+                            "type": "if_color",
+                            "id": "bddddcd1-f663-45ca-817e-4996e2583f10",
+                            "label": "If Pixel Color",
+                            "enabled": true,
+                            "x": 270,
+                            "y": 1133,
+                            "targetHexColor": "#E73320",
+                            "tolerancePct": 10,
+                            "tapOnMatch": false,
+                            "thenAction": "JUMP_TO_STEP",
+                            "thenJumpStepId": "9bc6bb98-f170-4899-a7e7-69828aa5b36d",
+                            "elseAction": "CONTINUE_NEXT",
+                            "elseJumpStepId": null,
+                            "targetWebView": "ACCOUNT_1"
+                        },
+                        {
+                            "type": "key",
+                            "id": "7aa26260-c817-467b-b71a-acf593c94ef4",
+                            "label": "Key 1",
+                            "enabled": true,
+                            "keyAction": "BACK",
+                            "customKeyCode": 8,
+                            "keyLabel": "1",
+                            "holdMs": 100,
+                            "metaState": 0,
+                            "targetWebView": "ACCOUNT_2"
+                        },
+                        {
+                            "type": "jump",
+                            "id": "34b80d28-25ae-455f-9517-5a207b63cedc",
+                            "label": "Jump To Step",
+                            "enabled": true,
+                            "targetStepId": "cd3fd02d-58f4-40e1-98c0-33282856941b"
+                        },
+                        {
+                            "type": "set_var",
+                            "id": "9bc6bb98-f170-4899-a7e7-69828aa5b36d",
+                            "label": "Set Variable",
+                            "enabled": true,
+                            "variableName": "checks",
+                            "operation": "INCREMENT",
+                            "valueExpression": "1"
+                        },
+                        {
+                            "type": "if_var",
+                            "id": "2d6fd7cb-b024-48c9-884f-1c79c437607b",
+                            "label": "If Variable",
+                            "enabled": true,
+                            "variableName": "checks",
+                            "comparator": "GREATER_OR_EQUAL",
+                            "compareValue": "10",
+                            "thenAction": "CONTINUE_NEXT",
+                            "thenJumpStepId": null,
+                            "elseAction": "SKIP_NEXT",
+                            "elseJumpStepId": null
+                        },
+                        {
+                            "type": "set_var",
+                            "id": "be68f04c-51e5-4146-a3b6-99a4fab47314",
+                            "label": "Set Variable",
+                            "enabled": true,
+                            "variableName": "heal",
+                            "operation": "SET",
+                            "valueExpression": "0"
+                        },
+                        {
+                            "type": "loop_end",
+                            "id": "d565bfbb-1d9a-425c-96a7-c478e2a5d86e",
+                            "label": "Loop End",
+                            "enabled": true,
+                            "loopStartId": "cd3fd02d-58f4-40e1-98c0-33282856941b"
+                        }
+                    ]
+                },
+                {
+                    "id": "4729ed8a-5ac0-4cfe-b273-2551af1b1b44",
+                    "name": "attack",
+                    "description": "",
+                    "steps": [
+                        {
+                            "type": "if_image",
+                            "id": "1a9e88b0-8b1a-4dd1-aa55-b72a3dd1343a",
+                            "label": "If Image Match toggle",
+                            "enabled": true,
+                            "templateId": "d3f316bc-89c3-4639-a4ad-1c4727a94829",
+                            "templateName": "Crop 122x105",
+                            "searchLeft": 1494,
+                            "searchTop": 1055,
+                            "searchRight": 1680,
+                            "searchBottom": 1224,
+                            "minConfidencePct": 90,
+                            "tapOnMatch": false,
+                            "thenAction": "CONTINUE_NEXT",
+                            "thenJumpStepId": null,
+                            "elseAction": "JUMP_TO_STEP",
+                            "elseJumpStepId": "0a752800-e748-463b-9aef-b59947603efb",
+                            "targetWebView": "DEFAULT"
+                        },
+                        {
+                            "type": "key",
+                            "id": "3cb8e188-f432-4635-8ae9-bab2a0f64d50",
+                            "label": "Key 0 attack",
+                            "enabled": true,
+                            "keyAction": "BACK",
+                            "customKeyCode": 7,
+                            "keyLabel": "0",
+                            "holdMs": 100,
+                            "metaState": 0,
+                            "targetWebView": "ACCOUNT_1"
+                        },
+                        {
+                            "type": "if_image",
+                            "id": "c7ed252a-aef0-4595-909f-7edb26b0f6af",
+                            "label": "If Image Match crucio",
+                            "enabled": true,
+                            "templateId": "0b273f62-7d39-41bb-9bb2-f6860e7e285e",
+                            "templateName": "Crop 318x121",
+                            "searchLeft": 0,
+                            "searchTop": 1216,
+                            "searchRight": 366,
+                            "searchBottom": 1401,
+                            "minConfidencePct": 90,
+                            "tapOnMatch": false,
+                            "thenAction": "SKIP_NEXT",
+                            "thenJumpStepId": null,
+                            "elseAction": "CONTINUE_NEXT",
+                            "elseJumpStepId": null,
+                            "targetWebView": "ACCOUNT_1"
+                        },
+                        {
+                            "type": "key",
+                            "id": "fcb3cafe-1416-4220-8135-474c9d30996d",
+                            "label": "Key 8 crucio",
+                            "enabled": true,
+                            "keyAction": "BACK",
+                            "customKeyCode": 15,
+                            "keyLabel": "8",
+                            "holdMs": 100,
+                            "metaState": 0,
+                            "targetWebView": "ACCOUNT_1"
+                        },
+                        {
+                            "type": "delay",
+                            "id": "0a752800-e748-463b-9aef-b59947603efb",
+                            "label": "Wait",
+                            "enabled": true,
+                            "minMs": 25,
+                            "maxMs": 50
+                        },
+                        {
+                            "type": "if_color",
+                            "id": "5f87159a-b81a-4b25-8a25-a96eafef3408",
+                            "label": "If Pixel Color",
+                            "enabled": true,
+                            "x": 206,
+                            "y": 1164,
+                            "targetHexColor": "#204485",
+                            "tolerancePct": 10,
+                            "tapOnMatch": false,
+                            "thenAction": "SKIP_NEXT",
+                            "thenJumpStepId": null,
+                            "elseAction": "CONTINUE_NEXT",
+                            "elseJumpStepId": null,
+                            "targetWebView": "ACCOUNT_1"
+                        },
+                        {
+                            "type": "key",
+                            "id": "730a81c8-2fbe-4b8c-b45a-06ccc82b9fed",
+                            "label": "Key 3 mp pot",
+                            "enabled": true,
+                            "keyAction": "BACK",
+                            "customKeyCode": 10,
+                            "keyLabel": "3",
+                            "holdMs": 100,
+                            "metaState": 0,
+                            "targetWebView": "ACCOUNT_1"
+                        }
+                    ]
+                },
+                {
+                    "id": "fa40f81c-ea23-45a8-9620-e2822e5609d8",
+                    "name": "buff set flags",
+                    "description": "",
+                    "steps": [
+                        {
+                            "type": "if_image",
+                            "id": "d09b6aa9-a7af-4ce9-9642-bfc35612750c",
+                            "label": "If Image Match haste",
+                            "enabled": true,
+                            "templateId": "9f73024e-bce8-4aa0-9b81-b097ce9fe219",
+                            "templateName": "Crop 320x154",
+                            "searchLeft": 24,
+                            "searchTop": 1214,
+                            "searchRight": 368,
+                            "searchBottom": 1432,
+                            "minConfidencePct": 85,
+                            "tapOnMatch": false,
+                            "thenAction": "SKIP_NEXT",
+                            "thenJumpStepId": null,
+                            "elseAction": "CONTINUE_NEXT",
+                            "elseJumpStepId": null,
+                            "targetWebView": "DEFAULT"
+                        },
+                        {
+                            "type": "set_var",
+                            "id": "01b3da9d-8397-462a-8b04-7e1321c7bfa8",
+                            "label": "Set Variable",
+                            "enabled": true,
+                            "variableName": "haste",
+                            "operation": "SET",
+                            "valueExpression": "1"
+                        },
+                        {
+                            "type": "if_image",
+                            "id": "691fac38-dc10-40dd-9ffe-4dc592afc519",
+                            "label": "If Image Match patience",
+                            "enabled": true,
+                            "templateId": "fdf994b7-fc8b-4f32-8b89-c3fad82f00af",
+                            "templateName": "Crop 344x218",
+                            "searchLeft": 24,
+                            "searchTop": 1214,
+                            "searchRight": 368,
+                            "searchBottom": 1432,
+                            "minConfidencePct": 90,
+                            "tapOnMatch": false,
+                            "thenAction": "SKIP_NEXT",
+                            "thenJumpStepId": null,
+                            "elseAction": "CONTINUE_NEXT",
+                            "elseJumpStepId": null,
+                            "targetWebView": "DEFAULT"
+                        },
+                        {
+                            "type": "set_var",
+                            "id": "e5ff97f4-8327-4075-873a-62be7256503e",
+                            "label": "Set Variable",
+                            "enabled": true,
+                            "variableName": "patience",
+                            "operation": "SET",
+                            "valueExpression": "1"
+                        },
+                        {
+                            "type": "if_image",
+                            "id": "be6f0037-836c-4bdc-a3bd-18e4bd78998e",
+                            "label": "If Image Match heap",
+                            "enabled": true,
+                            "templateId": "58e2b4dd-f54d-44ef-a69e-9568718d7fc6",
+                            "templateName": "Crop 344x218",
+                            "searchLeft": 24,
+                            "searchTop": 1214,
+                            "searchRight": 368,
+                            "searchBottom": 1432,
+                            "minConfidencePct": 90,
+                            "tapOnMatch": false,
+                            "thenAction": "SKIP_NEXT",
+                            "thenJumpStepId": null,
+                            "elseAction": "CONTINUE_NEXT",
+                            "elseJumpStepId": null,
+                            "targetWebView": "DEFAULT"
+                        },
+                        {
+                            "type": "set_var",
+                            "id": "0ba91518-3ad6-4387-8d3d-c0f75496002f",
+                            "label": "Set Variable",
+                            "enabled": true,
+                            "variableName": "heap",
+                            "operation": "SET",
+                            "valueExpression": "1"
+                        },
+                        {
+                            "type": "if_image",
+                            "id": "2a84ab1a-fbdd-4d1b-97bc-11e9ddf4723a",
+                            "label": "If Image Match cannon",
+                            "enabled": true,
+                            "templateId": "1a3f8e3b-db27-4af3-b290-fb832dbbe673",
+                            "templateName": "Crop 344x218",
+                            "searchLeft": 24,
+                            "searchTop": 1214,
+                            "searchRight": 368,
+                            "searchBottom": 1432,
+                            "minConfidencePct": 90,
+                            "tapOnMatch": false,
+                            "thenAction": "SKIP_NEXT",
+                            "thenJumpStepId": null,
+                            "elseAction": "CONTINUE_NEXT",
+                            "elseJumpStepId": null,
+                            "targetWebView": "DEFAULT"
+                        },
+                        {
+                            "type": "set_var",
+                            "id": "a90764ae-1f4b-4d30-80e2-df89b91de726",
+                            "label": "Set Variable",
+                            "enabled": true,
+                            "variableName": "cannon",
+                            "operation": "SET",
+                            "valueExpression": "1"
+                        },
+                        {
+                            "type": "if_image",
+                            "id": "b13b823d-759f-46a2-bdea-c35001736b39",
+                            "label": "If Image Match mental",
+                            "enabled": true,
+                            "templateId": "c7e0abc3-98db-4b66-ae66-0f4c8464891f",
+                            "templateName": "Crop 344x218",
+                            "searchLeft": 24,
+                            "searchTop": 1214,
+                            "searchRight": 368,
+                            "searchBottom": 1432,
+                            "minConfidencePct": 90,
+                            "tapOnMatch": false,
+                            "thenAction": "SKIP_NEXT",
+                            "thenJumpStepId": null,
+                            "elseAction": "CONTINUE_NEXT",
+                            "elseJumpStepId": null,
+                            "targetWebView": "DEFAULT"
+                        },
+                        {
+                            "type": "set_var",
+                            "id": "13826638-0458-4809-a429-32556a36c6a2",
+                            "label": "Set Variable",
+                            "enabled": true,
+                            "variableName": "mental",
+                            "operation": "SET",
+                            "valueExpression": "1"
+                        },
+                        {
+                            "type": "if_image",
+                            "id": "b0b9ac34-7a9d-4b9e-bda9-872e9166cf65",
+                            "label": "If Image Match quick",
+                            "enabled": true,
+                            "templateId": "5ed3f096-373d-4da8-838e-deae9a02bde4",
+                            "templateName": "Crop 344x218",
+                            "searchLeft": 24,
+                            "searchTop": 1214,
+                            "searchRight": 368,
+                            "searchBottom": 1432,
+                            "minConfidencePct": 90,
+                            "tapOnMatch": false,
+                            "thenAction": "SKIP_NEXT",
+                            "thenJumpStepId": null,
+                            "elseAction": "CONTINUE_NEXT",
+                            "elseJumpStepId": null,
+                            "targetWebView": "DEFAULT"
+                        },
+                        {
+                            "type": "set_var",
+                            "id": "b0797c94-d13e-45e2-9650-d046ba28c7c3",
+                            "label": "Set Variable",
+                            "enabled": true,
+                            "variableName": "quick",
+                            "operation": "SET",
+                            "valueExpression": "1"
+                        },
+                        {
+                            "type": "if_image",
+                            "id": "fc0abed7-5b8c-450c-a759-1bdc1b082f4a",
+                            "label": "If Image Match cat",
+                            "enabled": true,
+                            "templateId": "4ff587d1-a96b-444c-af16-acbf994cf592",
+                            "templateName": "Crop 344x218",
+                            "searchLeft": 24,
+                            "searchTop": 1214,
+                            "searchRight": 368,
+                            "searchBottom": 1432,
+                            "minConfidencePct": 90,
+                            "tapOnMatch": false,
+                            "thenAction": "SKIP_NEXT",
+                            "thenJumpStepId": null,
+                            "elseAction": "CONTINUE_NEXT",
+                            "elseJumpStepId": null,
+                            "targetWebView": "DEFAULT"
+                        },
+                        {
+                            "type": "set_var",
+                            "id": "e2048447-4732-4fd1-994a-4d842419509e",
+                            "label": "Set Variable",
+                            "enabled": true,
+                            "variableName": "cat",
+                            "operation": "SET",
+                            "valueExpression": "1"
+                        },
+                        {
+                            "type": "if_image",
+                            "id": "be47fe93-effc-4b1d-9d6c-77ff70025bc5",
+                            "label": "If Image Match protect",
+                            "enabled": true,
+                            "templateId": "e6775f38-5480-4658-826f-3a3ae74fe2f1",
+                            "templateName": "Crop 344x218",
+                            "searchLeft": 24,
+                            "searchTop": 1214,
+                            "searchRight": 368,
+                            "searchBottom": 1432,
+                            "minConfidencePct": 84,
+                            "tapOnMatch": false,
+                            "thenAction": "SKIP_NEXT",
+                            "thenJumpStepId": null,
+                            "elseAction": "CONTINUE_NEXT",
+                            "elseJumpStepId": null,
+                            "targetWebView": "DEFAULT"
+                        },
+                        {
+                            "type": "set_var",
+                            "id": "4c64a7c3-e196-4b95-bc8a-87f6df433f6c",
+                            "label": "Set Variable",
+                            "enabled": true,
+                            "variableName": "protect",
+                            "operation": "SET",
+                            "valueExpression": "1"
+                        },
+                        {
+                            "type": "if_image",
+                            "id": "b61701e6-3b09-40c3-a4ea-a218e7bd0862",
+                            "label": "If Image Match spirit",
+                            "enabled": true,
+                            "templateId": "d09895e4-42b4-486a-b0d4-b347c3d9c286",
+                            "templateName": "Crop 344x218",
+                            "searchLeft": 24,
+                            "searchTop": 1214,
+                            "searchRight": 368,
+                            "searchBottom": 1432,
+                            "minConfidencePct": 90,
+                            "tapOnMatch": false,
+                            "thenAction": "SKIP_NEXT",
+                            "thenJumpStepId": null,
+                            "elseAction": "CONTINUE_NEXT",
+                            "elseJumpStepId": null,
+                            "targetWebView": "DEFAULT"
+                        },
+                        {
+                            "type": "set_var",
+                            "id": "4a5b5a1b-cc9c-4c52-a637-c72e5590b78c",
+                            "label": "Set Variable",
+                            "enabled": true,
+                            "variableName": "spirit",
+                            "operation": "SET",
+                            "valueExpression": "1"
+                        },
+                        {
+                            "type": "if_var",
+                            "id": "6c2ee644-6186-4078-8822-48c689578ec4",
+                            "label": "If Variable",
+                            "enabled": true,
+                            "variableName": "haste",
+                            "comparator": "EQUALS",
+                            "compareValue": "1",
+                            "thenAction": "CONTINUE_NEXT",
+                            "thenJumpStepId": null,
+                            "elseAction": "SKIP_NEXT",
+                            "elseJumpStepId": null
+                        },
+                        {
+                            "type": "set_var",
+                            "id": "a5e5ee9a-2a1d-4f6b-912b-b09e0481a640",
+                            "label": "Set Variable",
+                            "enabled": true,
+                            "variableName": "buff",
+                            "operation": "SET",
+                            "valueExpression": "1"
+                        }
+                    ]
+                },
+                {
+                    "id": "cca955b5-3467-4a2f-992a-c80fd274f4b7",
+                    "name": "buff execute flags",
+                    "description": "",
+                    "steps": [
+                        {
+                            "type": "if_var",
+                            "id": "c547b162-363d-4df1-ad2d-c1e48d27931a",
+                            "label": "If Variable",
+                            "enabled": true,
+                            "variableName": "haste",
+                            "comparator": "EQUALS",
+                            "compareValue": "1",
+                            "thenAction": "CONTINUE_NEXT",
+                            "thenJumpStepId": null,
+                            "elseAction": "JUMP_TO_STEP",
+                            "elseJumpStepId": "5c285cfc-6a57-4cb2-9320-5193d80d8d70"
+                        },
+                        {
+                            "type": "key",
+                            "id": "4e60eb74-ea37-429f-861e-5d9f6b81bb96",
+                            "label": "Key 5 haste",
+                            "enabled": true,
+                            "keyAction": "BACK",
+                            "customKeyCode": 12,
+                            "keyLabel": "5",
+                            "holdMs": 100,
+                            "metaState": 0,
+                            "targetWebView": "ACCOUNT_2"
+                        },
+                        {
+                            "type": "set_var",
+                            "id": "24e8dc0f-dd54-47a5-bc37-5f7e8305021c",
+                            "label": "Set Variable",
+                            "enabled": true,
+                            "variableName": "haste",
+                            "operation": "SET",
+                            "valueExpression": "0"
+                        },
+                        {
+                            "type": "if_var",
+                            "id": "5c285cfc-6a57-4cb2-9320-5193d80d8d70",
+                            "label": "If Variable",
+                            "enabled": true,
+                            "variableName": "patience",
+                            "comparator": "EQUALS",
+                            "compareValue": "1",
+                            "thenAction": "CONTINUE_NEXT",
+                            "thenJumpStepId": null,
+                            "elseAction": "JUMP_TO_STEP",
+                            "elseJumpStepId": "a6a66ab0-9251-43a9-a352-3f623f0e505f"
+                        },
+                        {
+                            "type": "key",
+                            "id": "48766367-3d2d-4aa9-af84-99dc347c1011",
+                            "label": "Key 2 patience",
+                            "enabled": true,
+                            "keyAction": "BACK",
+                            "customKeyCode": 9,
+                            "keyLabel": "2",
+                            "holdMs": 100,
+                            "metaState": 0,
+                            "targetWebView": "ACCOUNT_2"
+                        },
+                        {
+                            "type": "set_var",
+                            "id": "15bed82b-afcc-4400-8088-1d32c4a32746",
+                            "label": "Set Variable",
+                            "enabled": true,
+                            "variableName": "patience",
+                            "operation": "SET",
+                            "valueExpression": "0"
+                        },
+                        {
+                            "type": "if_var",
+                            "id": "a6a66ab0-9251-43a9-a352-3f623f0e505f",
+                            "label": "If Variable",
+                            "enabled": true,
+                            "variableName": "heap",
+                            "comparator": "EQUALS",
+                            "compareValue": "1",
+                            "thenAction": "CONTINUE_NEXT",
+                            "thenJumpStepId": null,
+                            "elseAction": "JUMP_TO_STEP",
+                            "elseJumpStepId": "1114da58-baf8-4283-a037-ffac8a24c235"
+                        },
+                        {
+                            "type": "key",
+                            "id": "c96fbd33-b368-47b0-bfd2-904d1087c7b4",
+                            "label": "Key 6 heap",
+                            "enabled": true,
+                            "keyAction": "BACK",
+                            "customKeyCode": 13,
+                            "keyLabel": "6",
+                            "holdMs": 100,
+                            "metaState": 0,
+                            "targetWebView": "ACCOUNT_2"
+                        },
+                        {
+                            "type": "set_var",
+                            "id": "da619456-cbaa-4675-81a3-e959126317ee",
+                            "label": "Set Variable",
+                            "enabled": true,
+                            "variableName": "heap",
+                            "operation": "SET",
+                            "valueExpression": "0"
+                        },
+                        {
+                            "type": "if_var",
+                            "id": "1114da58-baf8-4283-a037-ffac8a24c235",
+                            "label": "If Variable",
+                            "enabled": true,
+                            "variableName": "cannon",
+                            "comparator": "EQUALS",
+                            "compareValue": "1",
+                            "thenAction": "CONTINUE_NEXT",
+                            "thenJumpStepId": null,
+                            "elseAction": "JUMP_TO_STEP",
+                            "elseJumpStepId": "b04541a9-a452-4f49-9962-1b938e489a3c"
+                        },
+                        {
+                            "type": "key",
+                            "id": "4f460602-2e3f-4af0-bbc9-3c2a5c13a127",
+                            "label": "Key 9 cannon",
+                            "enabled": true,
+                            "keyAction": "BACK",
+                            "customKeyCode": 16,
+                            "keyLabel": "9",
+                            "holdMs": 100,
+                            "metaState": 0,
+                            "targetWebView": "ACCOUNT_2"
+                        },
+                        {
+                            "type": "set_var",
+                            "id": "1c81d422-26a0-4f21-b22b-193362284296",
+                            "label": "Set Variable",
+                            "enabled": true,
+                            "variableName": "cannon",
+                            "operation": "SET",
+                            "valueExpression": "0"
+                        },
+                        {
+                            "type": "if_var",
+                            "id": "b04541a9-a452-4f49-9962-1b938e489a3c",
+                            "label": "If Variable",
+                            "enabled": true,
+                            "variableName": "mental",
+                            "comparator": "EQUALS",
+                            "compareValue": "1",
+                            "thenAction": "CONTINUE_NEXT",
+                            "thenJumpStepId": null,
+                            "elseAction": "JUMP_TO_STEP",
+                            "elseJumpStepId": "d1fb5609-a86d-426c-b05e-c734547ac13b"
+                        },
+                        {
+                            "type": "key",
+                            "id": "9ffa2db1-c019-41a7-8849-5594db7bb035",
+                            "label": "Key 4 mental",
+                            "enabled": true,
+                            "keyAction": "BACK",
+                            "customKeyCode": 11,
+                            "keyLabel": "4",
+                            "holdMs": 100,
+                            "metaState": 0,
+                            "targetWebView": "ACCOUNT_2"
+                        },
+                        {
+                            "type": "set_var",
+                            "id": "c1c71f55-c006-49ae-ba07-09c66b407df7",
+                            "label": "Set Variable",
+                            "enabled": true,
+                            "variableName": "mental",
+                            "operation": "SET",
+                            "valueExpression": "0"
+                        },
+                        {
+                            "type": "if_var",
+                            "id": "d1fb5609-a86d-426c-b05e-c734547ac13b",
+                            "label": "If Variable",
+                            "enabled": true,
+                            "variableName": "quick",
+                            "comparator": "EQUALS",
+                            "compareValue": "1",
+                            "thenAction": "CONTINUE_NEXT",
+                            "thenJumpStepId": null,
+                            "elseAction": "JUMP_TO_STEP",
+                            "elseJumpStepId": "faa263a2-5fd2-4568-9122-687098c7104a"
+                        },
+                        {
+                            "type": "key",
+                            "id": "16a0dc0e-6e5e-429d-97cf-fe58ab06e781",
+                            "label": "Key 3 quick",
+                            "enabled": true,
+                            "keyAction": "BACK",
+                            "customKeyCode": 10,
+                            "keyLabel": "3",
+                            "holdMs": 100,
+                            "metaState": 0,
+                            "targetWebView": "ACCOUNT_2"
+                        },
+                        {
+                            "type": "set_var",
+                            "id": "12a422d5-b128-4162-8b09-9e0538079831",
+                            "label": "Set Variable",
+                            "enabled": true,
+                            "variableName": "quick",
+                            "operation": "SET",
+                            "valueExpression": "0"
+                        },
+                        {
+                            "type": "if_var",
+                            "id": "faa263a2-5fd2-4568-9122-687098c7104a",
+                            "label": "If Variable",
+                            "enabled": true,
+                            "variableName": "cat",
+                            "comparator": "EQUALS",
+                            "compareValue": "1",
+                            "thenAction": "CONTINUE_NEXT",
+                            "thenJumpStepId": null,
+                            "elseAction": "JUMP_TO_STEP",
+                            "elseJumpStepId": "1763908c-f6b4-412e-b090-d5129bd33024"
+                        },
+                        {
+                            "type": "key",
+                            "id": "5213637c-4db5-493d-843a-cdb33ebf2f95",
+                            "label": "Key 7 cat",
+                            "enabled": true,
+                            "keyAction": "BACK",
+                            "customKeyCode": 14,
+                            "keyLabel": "7",
+                            "holdMs": 100,
+                            "metaState": 0,
+                            "targetWebView": "ACCOUNT_2"
+                        },
+                        {
+                            "type": "set_var",
+                            "id": "f2cd104e-6724-4517-95ed-421b81590e65",
+                            "label": "Set Variable",
+                            "enabled": true,
+                            "variableName": "cat",
+                            "operation": "SET",
+                            "valueExpression": "0"
+                        },
+                        {
+                            "type": "if_var",
+                            "id": "1763908c-f6b4-412e-b090-d5129bd33024",
+                            "label": "If Variable",
+                            "enabled": true,
+                            "variableName": "protect",
+                            "comparator": "EQUALS",
+                            "compareValue": "1",
+                            "thenAction": "CONTINUE_NEXT",
+                            "thenJumpStepId": null,
+                            "elseAction": "JUMP_TO_STEP",
+                            "elseJumpStepId": "d31e3dc5-6e1c-4a49-8eab-987bdc599382"
+                        },
+                        {
+                            "type": "key",
+                            "id": "69afebf5-5045-4a09-a7e1-65281703c228",
+                            "label": "Key 8 protect",
+                            "enabled": true,
+                            "keyAction": "BACK",
+                            "customKeyCode": 15,
+                            "keyLabel": "8",
+                            "holdMs": 100,
+                            "metaState": 0,
+                            "targetWebView": "ACCOUNT_2"
+                        },
+                        {
+                            "type": "set_var",
+                            "id": "7bc9958e-3b95-4068-8e30-4fdab4307bc0",
+                            "label": "Set Variable",
+                            "enabled": true,
+                            "variableName": "protect",
+                            "operation": "SET",
+                            "valueExpression": "0"
+                        },
+                        {
+                            "type": "if_var",
+                            "id": "d31e3dc5-6e1c-4a49-8eab-987bdc599382",
+                            "label": "If Variable",
+                            "enabled": true,
+                            "variableName": "spirit",
+                            "comparator": "EQUALS",
+                            "compareValue": "1",
+                            "thenAction": "CONTINUE_NEXT",
+                            "thenJumpStepId": null,
+                            "elseAction": "JUMP_TO_STEP",
+                            "elseJumpStepId": "9a099715-99fe-4825-9b03-39c0b1f81bde"
+                        },
+                        {
+                            "type": "key",
+                            "id": "3ecf0051-f01e-4065-816d-419d3306d139",
+                            "label": "Key 0 spirit",
+                            "enabled": true,
+                            "keyAction": "BACK",
+                            "customKeyCode": 7,
+                            "keyLabel": "0",
+                            "holdMs": 100,
+                            "metaState": 0,
+                            "targetWebView": "ACCOUNT_2"
+                        },
+                        {
+                            "type": "set_var",
+                            "id": "0615c552-38b8-4028-9ed3-b69dcdd973eb",
+                            "label": "Set Variable",
+                            "enabled": true,
+                            "variableName": "spirit",
+                            "operation": "SET",
+                            "valueExpression": "0"
+                        },
+                        {
+                            "type": "delay",
+                            "id": "9a099715-99fe-4825-9b03-39c0b1f81bde",
+                            "label": "Wait",
+                            "enabled": true,
+                            "minMs": 100,
+                            "maxMs": 200
+                        }
+                    ]
+                },
+                {
+                    "id": "039adb92-5dcf-49c2-ae4c-e684ea8b9823",
+                    "name": "check state",
+                    "description": "",
+                    "steps": [
+                        {
+                            "type": "call_fn",
+                            "id": "1b3b7894-9bef-48a5-bccd-ea145d9c9cc8",
+                            "label": "Call heal set flag",
+                            "enabled": true,
+                            "functionId": "e2dda407-2cf0-4117-b5e2-f740cc757962",
+                            "functionName": "heal set flag",
+                            "repeatCount": 1
+                        },
+                        {
+                            "type": "call_fn",
+                            "id": "5dcf6b52-8e37-4f6c-83a6-2255bebe1283",
+                            "label": "Call buff set flags",
+                            "enabled": true,
+                            "functionId": "fa40f81c-ea23-45a8-9620-e2822e5609d8",
+                            "functionName": "buff set flags",
+                            "repeatCount": 1
+                        }
+                    ]
+                },
+                {
+                    "id": "e2dda407-2cf0-4117-b5e2-f740cc757962",
+                    "name": "heal set flag",
+                    "description": "",
+                    "steps": [
+                        {
+                            "type": "if_color",
+                            "id": "00453db4-a0cf-4685-a257-75773786346d",
+                            "label": "If Pixel Color",
+                            "enabled": true,
+                            "x": 270,
+                            "y": 1133,
+                            "targetHexColor": "#E73320",
+                            "tolerancePct": 10,
+                            "tapOnMatch": false,
+                            "thenAction": "SKIP_NEXT",
+                            "thenJumpStepId": "9bc6bb98-f170-4899-a7e7-69828aa5b36d",
+                            "elseAction": "CONTINUE_NEXT",
+                            "elseJumpStepId": null,
+                            "targetWebView": "ACCOUNT_1"
+                        },
+                        {
+                            "type": "set_var",
+                            "id": "70e0c6ad-3646-4f47-a272-a62cee54902d",
+                            "label": "Set Variable",
+                            "enabled": true,
+                            "variableName": "heal",
+                            "operation": "SET",
+                            "valueExpression": "1"
+                        }
+                    ]
+                },
+                {
+                    "id": "e414f3b2-a192-4a40-8b2b-6e6cb1b7115c",
+                    "name": "attack set flag",
+                    "description": "",
+                    "steps": [
+                        {
+                            "type": "if_image",
+                            "id": "562b3ab2-c406-4e30-b0e7-76edebb407a3",
+                            "label": "If Image Match toggle",
+                            "enabled": true,
+                            "templateId": "d3f316bc-89c3-4639-a4ad-1c4727a94829",
+                            "templateName": "Crop 122x105",
+                            "searchLeft": 1494,
+                            "searchTop": 1055,
+                            "searchRight": 1680,
+                            "searchBottom": 1224,
+                            "minConfidencePct": 90,
+                            "tapOnMatch": false,
+                            "thenAction": "CONTINUE_NEXT",
+                            "thenJumpStepId": "c4d2439d-e0f2-46d2-b5b9-327799a4ddd3",
+                            "elseAction": "JUMP_TO_STEP",
+                            "elseJumpStepId": "c4d2439d-e0f2-46d2-b5b9-327799a4ddd3",
+                            "targetWebView": "DEFAULT"
+                        },
+                        {
+                            "type": "set_var",
+                            "id": "f628abbd-fae0-4f3b-8fea-b14bb1ca09c6",
+                            "label": "Set Variable",
+                            "enabled": true,
+                            "variableName": "attack",
+                            "operation": "SET",
+                            "valueExpression": "1"
+                        },
+                        {
+                            "type": "if_var",
+                            "id": "1160c06a-4daf-4ccc-9751-7cd3a276a2cc",
+                            "label": "If Variable",
+                            "enabled": true,
+                            "variableName": "attack",
+                            "comparator": "EQUALS",
+                            "compareValue": "1",
+                            "thenAction": "SKIP_NEXT",
+                            "thenJumpStepId": null,
+                            "elseAction": "SKIP_NEXT",
+                            "elseJumpStepId": null
+                        },
+                        {
+                            "type": "set_var",
+                            "id": "c4d2439d-e0f2-46d2-b5b9-327799a4ddd3",
+                            "label": "Set Variable",
+                            "enabled": true,
+                            "variableName": "attack",
+                            "operation": "SET",
+                            "valueExpression": "0"
+                        }
+                    ]
+                }
+            ],
+            "createdAt": 1795117484062,
+            "updatedAt": 1795148367642
+        }
+    ],
+    "embeddedTemplates": [
+        {
+            "id": "9f73024e-bce8-4aa0-9b81-b097ce9fe219",
+            "name": "Crop 320x154",
+            "width": 36,
+            "height": 23,
+            "pngBase64": "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"
+        },
+        {
+            "id": "fdf994b7-fc8b-4f32-8b89-c3fad82f00af",
+            "name": "Crop 344x218",
+            "width": 28,
+            "height": 21,
+            "pngBase64": "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"
+        },
+        {
+            "id": "58e2b4dd-f54d-44ef-a69e-9568718d7fc6",
+            "name": "Crop 344x218",
+            "width": 35,
+            "height": 22,
+            "pngBase64": "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"
+        },
+        {
+            "id": "1a3f8e3b-db27-4af3-b290-fb832dbbe673",
+            "name": "Crop 344x218",
+            "width": 37,
+            "height": 22,
+            "pngBase64": "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"
+        },
+        {
+            "id": "c7e0abc3-98db-4b66-ae66-0f4c8464891f",
+            "name": "Crop 344x218",
+            "width": 35,
+            "height": 22,
+            "pngBase64": "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"
+        },
+        {
+            "id": "5ed3f096-373d-4da8-838e-deae9a02bde4",
+            "name": "Crop 344x218",
+            "width": 35,
+            "height": 22,
+            "pngBase64": "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"
+        },
+        {
+            "id": "4ff587d1-a96b-444c-af16-acbf994cf592",
+            "name": "Crop 344x218",
+            "width": 34,
+            "height": 23,
+            "pngBase64": "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"
+        },
+        {
+            "id": "e6775f38-5480-4658-826f-3a3ae74fe2f1",
+            "name": "Crop 344x218",
+            "width": 35,
+            "height": 25,
+            "pngBase64": "iVBORw0KGgoAAAANSUhEUgAAACMAAAAZCAYAAAC7OJeSAAAAAXNSR0IArs4c6QAAAARzQklUCAgICHwIZIgAAAhXSURBVEiJjZZJbxzXEcd/73XPvvTsHFGiSEoiRUmmRFmWYEe2DC/KBsNwjPhgf4UcHAT5ILkEyCmXXAIkQC5BFgdGYieQLTmSbVGWKK7iNpSGnJ7hLD3T68thuMoykAK6gX79f1X/qldVr8SHP/+FklKiggClFJqmo+saIAAwcnmSmRz/lwhAASgUChQoFQAKTQvhug61jQ18z8XzPHzfR0oJQqCCAN11XAIV4HkeKHVIczyd5sTxUdL54v6y2nt9m4nYxSh2KaHUDqH+to7VZXXu4d4uKSWRSAQpJboCXMfF9T7G9xP4/iQA0ViMsfOX6OlR/nJjmkq9vcfmWVR2AwMCgUIHlFJ9vFKENckLY8NMnT1PEAQsPfgGAF3X+2Q0iW5ZdRxnhmj0MRDGcRLEE2c4d+UqT3ydT2/dI6bZDKaeRUEdDpIQiB1S2t6/PhlfKb6cn+FJo8krZ87iui7ri/N4nkfP7pHUk+idtovUCkxdukjH6nLvm3nOXfmAdPkoX9y9x7WhJs8fccjEggP+q2ef1DOlH0nPVzyqS/602OLj+8t8b/Q0vuexOj8LPdCkhp4vpCgfNRmfOIUf+IyeGGar9i/8ym3eHS+TdEwadx5wd7ZK2/IPBQUgFNYYPZ0jaYRZW9qmut4+BBE7QBWKoJ97haGTJ1mq1Li5XOXa2QsEQcDawhzNVhNdSp9INKBnW0QjUdqtJl/e/JyYHuOtl99BBQq7adF8sk2j7X3bb6XQnTZDx6I8+KKOELtZLPYwgQoIPJdg9ndsfL/I8KWrLC0uc2NhjR+9dJUg8FlfXEC8/W5epTMwNTWM1ekxPb3GfD1LXhP8pJxm7O1foieHD+gXhyLjdkzW//YrrI0ZBt/4GalTV5ChCOIAme0nq0x/9Efmb/yDmxM/JX96itETJ2HxN4xmoxw9/j63P/kY3e0ZrK2sEQ8t0Om6PK5oqGOvI+MRgsan5MKrRFKKxmaVtmlCEOD6BbInX8LIpOn21lnvtml2wxxb/g/t+hKWozhyZIBWq4UXNcicvczkaz+k9+guD9IpNlbnKbh3eOnCKUr6HFL/N8WSh26kz9FYqVOrdeh1AX+QN9/6AL3bZOnXf+D44lcc8yvo2zXczU1QsDG9SbF0FJE9z8I/f8/s7Ao9T+d0x6T1eIVWq020VqbVakMuizFxGkEbSb/whZSYjz7jiR5Qem6E+dmvWF8toUeiBTLGJMvLt9C1OIXCKJ4HdqeH1epRX14mGfYonJginR7FqjwkGtmAnkmnY2EufMXoaIbMcI6hs6dodyxarQaDg2UsV+HEskhNAxQC0IEg0LlbHSTm30MG8/x1fpy0CzoKYrESQyOXQYUQgYHneaRTSVIDRY4OH2dg/Dm04jXE42XCxYCBCZtYPk3TdQGI51PEcgYgEUKixZJE8oP4SsPruYdbEYKQphHNj7NtPWZl1aZQvsiItJG7mXj9nQ954ZX3EEKSy2UA2NoyqdmCtrujSUsiU2fQImGkrh1IUQFIkIJwtkS0NEwoU0TqYZ7VkKLROK9f/zGxwYs09Qk+uH6NkpFG3y2MlJHF7vUIh0NIKbG6XYIgQOjhA+UKyFj/HgNC4dD+shTo8RQimcVud/pXge/jbFUJxfxDZKQmyeZzrAxcAU1SLhWZQyCFkPvsFXR7PfwgIB6PEYtFSaWSJJOJQ53DdV1ct3+U8XiMWDxKNmsQyRVB9C8E3/cJSYXbqqMJSKYSOyYUwY5zjhfgeD6pZJJoNILc7xmKeCpF5ugIzZZFLrRJJpMmFovS6XRwXQ+p9eFaLEGz3cXzfAwjhZFO4fsBMhLZ7y3bLQI/4EixQKlUJAj614kXBAwePbbnmmnWcV0Xw0ihN5st9HAYBRhphx9c7zFv3UF/8hEbG1U2qzVUPELbr4CMAILIwCAiGmdry2Rjo4oVUhQSOnnHxt8x6jgu7UYNe6tKslCl0dimUnmCHGjwxvBNljhJPBZnq1rFNBusr1fQHcdmcuoC8cgWUfE5MtQm0msTwmLv7JQHzgqESuBsIPUw2YxBoKeRUqBpklQqgbW+jKUnUJqO37VwzOqhTgygyYC8toTP37GHn+NU9DNA4PkBeqGouDj5kLA/w8qayeychj3xLgYB8DXt5QqF4QHw6v1nRzqWSTKbY2TyecJJD6XA3Kxh2xsHMlWiGUMgdQgcABrdGHfXDc4dm+ZI6nNIa2jCJJ320KPJFf57ewHbcdhYb9BpZckcaQFjALTmH2GNDREfuczBMu25gt5WBe38mzjdTfwQkBREDpay0NESAwhlgVPpV6AmubE0QvzYaYrdP+Nb64wVZxk7baGfm0zw8OEaK8ubKKWQus/8/AzFaJwy4Ns2dq1JfKzEU5MUCAgZeUJGfm8JxFPjK2B9DaoLCNLeDKbzKgsz95lbuc2VqRKBPU1IM9FVIHn56hSb4zWmp5eo1ZqYm4s0bY2SpshcnsQYH6L66W+pP1zAtx3SYxfIX3yVUDxNc3Ga2p1PcNsNeDo/ImGyEyfIjo9i+TbrOY9EcItU/SZOW2dkZIBSyaBWW6NuthDvvJdSJ08NMjxcJpEIUa+3WKrYrDVSaIu3KB0vM1IqU59Z2DOiAC0SQ4YieO1tvkt24xNOJahKj0ebVZKpEMWCwdDxIrlsknqjw9rqJmtrJuLla1GVSEHSCDFQynLm7EnyuRi1msn9+6tUKjU8P3jK531D4sB7d7Y7jOsjdU2jXM4wMlomm02ytdVk+VGVWq1Jq+nSaYJ48cUjKgjqhKOQzkA4Jsnn0lx6/iJjI+8TqMPzrs8cPnP7376Padbo2c53EtpVIIWg2epy/5sVTLOF3VO0GuDYIEWW/wGcX+DvF0DGzQAAAABJRU5ErkJggg=="
+        },
+        {
+            "id": "d09895e4-42b4-486a-b0d4-b347c3d9c286",
+            "name": "Crop 344x218",
+            "width": 32,
+            "height": 23,
+            "pngBase64": "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"
+        },
+        {
+            "id": "0b273f62-7d39-41bb-9bb2-f6860e7e285e",
+            "name": "Crop 318x121",
+            "width": 38,
+            "height": 20,
+            "pngBase64": "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"
+        },
+        {
+            "id": "d3f316bc-89c3-4639-a4ad-1c4727a94829",
+            "name": "Crop 122x105",
+            "width": 39,
+            "height": 40,
+            "pngBase64": "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"
+        }
+    ]
+}
