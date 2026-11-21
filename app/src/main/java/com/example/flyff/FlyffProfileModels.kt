@@ -203,9 +203,9 @@ data class BuffKeyLink(
     val activeBuffId: String,
     val refreshBelowSec: Int = 90,
     val priority: Int = 10,
-    val castGuardMs: Long = 950L,
+    val castGuardMs: Long = 180L,
     val requiresSafeHp: Boolean = true,
-    val minConfidencePct: Int = 82,
+    val minConfidencePct: Int = 74,
     val enabled: Boolean = true
 )
 
@@ -216,7 +216,7 @@ data class HealRuleConfig(
     val healSkillKeyId: String? = null,
     val triggerBelowPct: Int = 85,
     val safeBuffMinHpPct: Int = 92,
-    val healCadenceMs: Long = 220L,
+    val healCadenceMs: Long = 60L,
     val postHealStabilizeChecks: Int = 2,
     val secondaryEnabled: Boolean = false,
     val secondaryTargetChar: WebViewTarget = WebViewTarget.ACCOUNT_2,
@@ -231,7 +231,7 @@ data class VitalTriggerRule(
     val vitalType: VitalType = VitalType.MP,
     val triggerBelowPct: Int = 40,
     val skillKeyId: String? = null,
-    val cooldownMs: Long = 1500L,
+    val cooldownMs: Long = 350L,
     val enabled: Boolean = true
 )
 
@@ -252,7 +252,7 @@ data class CombatRotationConfig(
     val manualCombatEnabled: Boolean = false,
     val toggleMinConfidencePct: Int = 85,
     val attackSkillKeyIds: List<String> = emptyList(),
-    val attackIntervalMs: Long = 350L,
+    val attackIntervalMs: Long = 80L,
     val cooldownSkills: List<CooldownSkillRule> = emptyList()
 )
 
@@ -262,8 +262,10 @@ data class FlyffProfile(
     val name: String = "Flyff Smart Profile",
     val char1Label: String = "Fighter (A1)",
     val char2Label: String = "Buffer / RM (A2)",
-    val pollingIntervalMs: Long = 160L,
-    val buffScanIntervalMs: Long = 1000L,
+    val pollingIntervalMs: Long = 45L,
+    val buffScanIntervalMs: Long = 1500L,
+    val minBuffRecastSec: Int = 480,
+    val schemaVersion: Int = 1,
     val skillKeys: List<ScannedSkillKey> = emptyList(),
     val activeBuffs: List<ActiveBuffDefinition> = emptyList(),
     val buffLinks: List<BuffKeyLink> = emptyList(),
@@ -283,6 +285,39 @@ data class FlyffProfile(
     fun calibratedLayoutsSummary(): String {
         if (layouts.isEmpty()) return "No HUD calibrated"
         return layouts.keys.joinToString(" · ") { it.shortLabel }
+    }
+
+    /**
+     * Upgrades untouched v1 slow default timings (160ms poll, 220ms heal, 350ms attack,
+     * 950ms buff cast guard, 1500ms pot cooldown) to v2 instant-response defaults while
+     * preserving any custom timings set by the user after migration.
+     */
+    fun migrateIfNeeded(): FlyffProfile {
+        if (schemaVersion >= CURRENT_SCHEMA_VERSION) return this
+        return copy(
+            schemaVersion = CURRENT_SCHEMA_VERSION,
+            pollingIntervalMs = if (pollingIntervalMs == 160L) 45L else pollingIntervalMs,
+            buffScanIntervalMs = if (buffScanIntervalMs == 1000L) 1500L else buffScanIntervalMs,
+            healRule = healRule.copy(
+                healCadenceMs = if (healRule.healCadenceMs == 220L) 60L else healRule.healCadenceMs
+            ),
+            vitalTriggers = vitalTriggers.map { rule ->
+                if (rule.cooldownMs == 1500L) rule.copy(cooldownMs = 350L) else rule
+            },
+            buffLinks = buffLinks.map { link ->
+                link.copy(
+                    castGuardMs = if (link.castGuardMs == 950L) 180L else link.castGuardMs,
+                    minConfidencePct = if (link.minConfidencePct == 82) 74 else link.minConfidencePct
+                )
+            },
+            combatConfig = combatConfig.copy(
+                attackIntervalMs = if (combatConfig.attackIntervalMs == 350L) 80L else combatConfig.attackIntervalMs
+            )
+        )
+    }
+
+    companion object {
+        const val CURRENT_SCHEMA_VERSION = 2
     }
 }
 

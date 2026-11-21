@@ -232,9 +232,10 @@ open class ScreenDetector(private val context: Context) {
             Rect(0, 0, screen.width, screen.height)
         }
 
-        val screenW = screen.width
-        val screenPixels = IntArray(screen.width * screen.height)
-        screen.getPixels(screenPixels, 0, screenW, 0, 0, screen.width, screen.height)
+        val roiW = roi.width()
+        val roiH = roi.height()
+        val roiPixels = IntArray(roiW * roiH)
+        screen.getPixels(roiPixels, 0, roiW, roi.left, roi.top, roiW, roiH)
 
         val tplPixels = IntArray(tplW * tplH)
         template.getPixels(tplPixels, 0, tplW, 0, 0, tplW, tplH)
@@ -244,19 +245,19 @@ open class ScreenDetector(private val context: Context) {
         val sampleStep = max(2, minOf(tplW, tplH) / 10)
 
         var bestScore = -1.0
-        var bestX = roi.left
-        var bestY = roi.top
+        var bestX = 0
+        var bestY = 0
 
-        val maxStartX = roi.right - tplW
-        val maxStartY = roi.bottom - tplH
+        val maxStartX = roiW - tplW
+        val maxStartY = roiH - tplH
 
-        var y = roi.top
+        var y = 0
         while (y <= maxStartY) {
-            var x = roi.left
+            var x = 0
             while (x <= maxStartX) {
                 val score = computePixelSimilarity(
-                    screenPixels,
-                    screenW,
+                    roiPixels,
+                    roiW,
                     tplPixels,
                     tplW,
                     tplH,
@@ -275,16 +276,16 @@ open class ScreenDetector(private val context: Context) {
         }
 
         // Local refinement around best coarse match
-        val refineStartX = (bestX - coarseStride).coerceAtLeast(roi.left)
+        val refineStartX = (bestX - coarseStride).coerceAtLeast(0)
         val refineEndX = (bestX + coarseStride).coerceAtMost(maxStartX)
-        val refineStartY = (bestY - coarseStride).coerceAtLeast(roi.top)
+        val refineStartY = (bestY - coarseStride).coerceAtLeast(0)
         val refineEndY = (bestY + coarseStride).coerceAtMost(maxStartY)
 
         for (ry in refineStartY..refineEndY) {
             for (rx in refineStartX..refineEndX) {
                 val score = computePixelSimilarity(
-                    screenPixels,
-                    screenW,
+                    roiPixels,
+                    roiW,
                     tplPixels,
                     tplW,
                     tplH,
@@ -304,8 +305,8 @@ open class ScreenDetector(private val context: Context) {
         val matched = confidencePct >= minConfidencePct.coerceIn(1, 100)
         ImageMatchResult(
             matched = matched,
-            centerX = bestX + tplW / 2,
-            centerY = bestY + tplH / 2,
+            centerX = roi.left + bestX + tplW / 2,
+            centerY = roi.top + bestY + tplH / 2,
             confidencePct = confidencePct
         )
     }

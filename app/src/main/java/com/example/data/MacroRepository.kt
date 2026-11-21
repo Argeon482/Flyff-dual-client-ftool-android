@@ -58,7 +58,10 @@ class MacroRepository(
         macroDao.getFlyffProfileById(id)?.toFlyffProfileOrNull()
 
     suspend fun saveFlyffProfile(profile: FlyffProfile) {
-        val updated = profile.copy(updatedAt = System.currentTimeMillis())
+        val updated = profile.migrateIfNeeded().copy(
+            schemaVersion = FlyffProfile.CURRENT_SCHEMA_VERSION,
+            updatedAt = System.currentTimeMillis()
+        )
         macroDao.upsertFlyffProfile(
             FlyffProfileEntity(
                 id = updated.id,
@@ -400,7 +403,7 @@ class MacroRepository(
     }
 
     private fun FlyffProfileEntity.toFlyffProfileOrNull(): FlyffProfile? =
-        runCatching { json.decodeFromString<FlyffProfile>(profileJson) }.getOrNull()
+        runCatching { json.decodeFromString<FlyffProfile>(profileJson).migrateIfNeeded() }.getOrNull()
 
     companion object {
         fun bitmapToPngBytes(bitmap: Bitmap): ByteArray {

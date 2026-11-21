@@ -20,8 +20,12 @@ import com.example.dualweb.DualWebPreferences
 import com.example.dualweb.WebViewTextInputHelper
 import com.example.engine.ExecutionStatus
 import com.example.engine.MacroInterpreter
+import com.example.flyff.ActiveBuffDefinition
 import com.example.flyff.BarCalibrationSpec
+import com.example.flyff.BuffKeyLink
 import com.example.flyff.BuffTimerOcrReader
+import com.example.flyff.CharacterHudRegions
+import com.example.flyff.CombatRotationConfig
 import com.example.flyff.FlyffCatalogEntry
 import com.example.flyff.FlyffIconMatcher
 import com.example.flyff.FlyffMacroCompiler
@@ -1539,6 +1543,193 @@ class ExampleRobolectricTest {
         iconBmp.recycle()
         artCrop.recycle()
         repo.deleteTemplate(attackTpl.id)
+        db.close()
+    }
+
+    @Test
+    fun flyffVisionAnalyzer_derivesHpBarFromMpFpSpacingEvenWhenHpEmptyOrPortraitRed() {
+        val w = 900
+        val h = 900
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        fillBitmapRect(bmp, 0, 0, w, h, Color.rgb(185, 195, 205))
+        // Dark HUD box
+        fillBitmapRect(bmp, 10, 10, 304, 112, Color.rgb(32, 36, 44))
+        // Distracting red/crimson character hair/armor in portrait area (MUST NOT hijack HP!)
+        fillBitmapRect(bmp, 18, 18, 92, 96, Color.rgb(210, 52, 46))
+
+        // Uniformly spaced HP (y=30..44, EMPTY at 0%!), MP (y=52..66, 100%), FP (y=74..88, 100%) -> stepY = 22
+        val barLeft = 108
+        val barRight = 288
+        drawFlyffVitalBar(bmp, barLeft, 30, barRight, 44, 0, VitalType.HP)
+        drawFlyffVitalBar(bmp, barLeft, 52, barRight, 66, 100, VitalType.MP)
+        drawFlyffVitalBar(bmp, barLeft, 74, barRight, 88, 100, VitalType.FP)
+
+        val hud = FlyffVisionAnalyzer.autoDetectMobileHudBars(bmp, Rect(0, 0, w, h), WebViewTarget.ACCOUNT_1)
+        val hpRect = hud.hpBar!!.rect.toAndroidRect(w, h)
+        assertTrue("HP left should match MP/FP (~$barLeft), got ${hpRect.left}", kotlin.math.abs(hpRect.left - barLeft) <= 3)
+        assertTrue("HP right should match MP/FP (~$barRight), got ${hpRect.right}", kotlin.math.abs(hpRect.right - barRight) <= 3)
+        assertTrue("HP top should be derived at ~30 (mp.top - stepY), got ${hpRect.top}", kotlin.math.abs(hpRect.top - 30) <= 3)
+        assertEquals("Empty HP bar must read 0%", 0, FlyffVisionAnalyzer.measureBarFillPercent(bmp, hud.hpBar!!))
+
+        // Now paint HP at 45% in the same frame and give measureHudVitalsDynamic a BAD saved HP rect (off by +18px)
+        drawFlyffVitalBar(bmp, barLeft, 30, barRight, 44, 45, VitalType.HP)
+        val brokenSavedHud = hud.copy(
+            hpBar = BarCalibrationSpec(VitalType.HP, RectSpec.fromPixels(barLeft, 12, barRight - 40, 24, w, h))
+        )
+        val live = FlyffVisionAnalyzer.measureHudVitalsDynamic(bmp, brokenSavedHud, Rect(0, 0, w, h))
+        assertTrue("Saved bad HP bar should auto-snap from MP/FP geometry", live.reanchored)
+        assertTrue("Auto-snapped HP (45%) should read 39..51%, got ${live.hpPct}%", (live.hpPct ?: -1) in 39..51)
+        bmp.recycle()
+    }
+
+    @Test
+    fun smartFlyffEngine_rapidHealAndMultiHitAttacksWith8MinBuffLockout() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        val repo = MacroRepository(context, db.macroDao())
+
+        // Verify v1->v2 migration upgrades old slow defaults automatically
+        val legacyV1 = FlyffProfile(
+            schemaVersion = 1,
+            pollingIntervalMs = 160L,
+            healRule = HealRuleConfig(healCadenceMs = 220L),
+            combatConfig = CombatRotationConfig(attackIntervalMs = 350L),
+            vitalTriggers = listOf(VitalTriggerRule(cooldownMs = 1500L))
+        )
+        val migrated = legacyV1.migrateIfNeeded()
+        assertEquals(FlyffProfile.CURRENT_SCHEMA_VERSION, migrated.schemaVersion)
+        assertEquals(45L, migrated.pollingIntervalMs)
+        assertEquals(60L, migrated.healRule.healCadenceMs)
+        assertEquals(80L, migrated.combatConfig.attackIntervalMs)
+        assertEquals(350L, migrated.vitalTriggers.first().cooldownMs)
+        assertEquals(480, migrated.minBuffRecastSec) // 8 minutes minimum!
+
+        // Build live 50/50 split frame: A1 HP=50% (needs rapid heal + rapid attacks), A2 HP=100%
+        val w = 900
+        val h = 1600
+        val frame = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        fillBitmapRect(frame, 0, 0, w, h, Color.rgb(185, 195, 205))
+        // A2 top pane
+        fillBitmapRect(frame, 12, 12, 290, 108, Color.rgb(34, 38, 46))
+        drawFlyffVitalBar(frame, 104, 28, 280, 42, 100, VitalType.HP)
+        drawFlyffVitalBar(frame, 104, 50, 280, 64, 100, VitalType.MP)
+        drawFlyffVitalBar(frame, 104, 72, 280, 86, 100, VitalType.FP)
+        // A1 bottom pane: HP=50% (triggers rapid heal), MP=100%, FP=100%
+        fillBitmapRect(frame, 12, 812, 290, 908, Color.rgb(34, 38, 46))
+        drawFlyffVitalBar(frame, 104, 828, 280, 842, 50, VitalType.HP)
+        drawFlyffVitalBar(frame, 104, 850, 280, 864, 100, VitalType.MP)
+        drawFlyffVitalBar(frame, 104, 872, 280, 886, 100, VitalType.FP)
+
+        // Create a dummy buff template that is NOT present on frame (to test 8-min single-cast lockout)
+        val missingBuffBmp = Bitmap.createBitmap(24, 16, Bitmap.Config.ARGB_8888)
+        missingBuffBmp.eraseColor(Color.MAGENTA)
+        val missingTpl = repo.saveTemplateBitmap("MissingHaste", missingBuffBmp)
+        missingBuffBmp.recycle()
+
+        val testDetector = object : ScreenDetector(context) {
+            init { _isActive.value = true }
+            override suspend fun captureLatestBitmap(): Bitmap = frame.copy(Bitmap.Config.ARGB_8888, false)
+        }
+
+        val dispatched = java.util.Collections.synchronizedList(mutableListOf<Pair<WebViewTarget, Int>>())
+        val bridge = DualWebInputBridge()
+        val delegate = object : DualWebMacroDelegate {
+            override fun dispatchKey(keyCode: Int, holdMs: Long, metaState: Int, targetOverride: WebViewTarget): Boolean {
+                dispatched.add(targetOverride to keyCode)
+                return true
+            }
+            override fun dispatchTap(screenX: Float, screenY: Float, holdMs: Long, jitterPx: Int, targetOverride: WebViewTarget) = true
+            override fun dispatchSwipe(startX: Float, startY: Float, endX: Float, endY: Float, durationMs: Long, steps: Int, targetOverride: WebViewTarget) = true
+            override fun describeTarget(targetOverride: WebViewTarget) = targetOverride.shortLabel
+            override fun currentLayoutMode() = DualLayoutMode.SPLIT_50_50
+            override fun currentPaneRects() = Rect(0, 800, w, h) to Rect(0, 0, w, 800)
+        }
+        bridge.attach(delegate)
+
+        val healKey = ScannedSkillKey(id = "k-heal", owner = WebViewTarget.ACCOUNT_2, label = "Heal", category = SkillCategory.HEAL, keyCode = KeyEvent.KEYCODE_1, keyLabel = "1")
+        val atkKey = ScannedSkillKey(id = "k-atk", owner = WebViewTarget.ACCOUNT_1, label = "Max Crisis", category = SkillCategory.ATTACK_AOE, keyCode = KeyEvent.KEYCODE_9, keyLabel = "9")
+        val buffKey = ScannedSkillKey(id = "k-haste", owner = WebViewTarget.ACCOUNT_2, label = "Haste", category = SkillCategory.PARTY_BUFF, keyCode = KeyEvent.KEYCODE_5, keyLabel = "5")
+        val buffDef = ActiveBuffDefinition(
+            id = "b-haste",
+            targetChar = WebViewTarget.ACCOUNT_1,
+            label = "Haste",
+            perLayoutTemplateIds = mapOf(DualLayoutMode.SPLIT_50_50 to missingTpl.id)
+        )
+
+        val a1Hud = CharacterHudRegions(
+            owner = WebViewTarget.ACCOUNT_1,
+            paneRect = RectSpec.fromPixels(0, 800, w, h, w, h),
+            hpBar = BarCalibrationSpec(VitalType.HP, RectSpec.fromPixels(104, 828, 280, 842, w, h)),
+            mpBar = BarCalibrationSpec(VitalType.MP, RectSpec.fromPixels(104, 850, 280, 864, w, h)),
+            fpBar = BarCalibrationSpec(VitalType.FP, RectSpec.fromPixels(104, 872, 280, 886, w, h)),
+            buffGridRegion = RectSpec.fromPixels(16, 920, 280, 1020, w, h)
+        )
+        val a2Hud = CharacterHudRegions(
+            owner = WebViewTarget.ACCOUNT_2,
+            paneRect = RectSpec.fromPixels(0, 0, w, 800, w, h),
+            hpBar = BarCalibrationSpec(VitalType.HP, RectSpec.fromPixels(104, 28, 280, 42, w, h)),
+            mpBar = BarCalibrationSpec(VitalType.MP, RectSpec.fromPixels(104, 50, 280, 64, w, h)),
+            fpBar = BarCalibrationSpec(VitalType.FP, RectSpec.fromPixels(104, 72, 280, 86, w, h)),
+            buffGridRegion = RectSpec.fromPixels(16, 120, 280, 220, w, h)
+        )
+
+        val profile = FlyffProfile(
+            name = "Fast Combat + 8m Buff",
+            pollingIntervalMs = 35L,
+            buffScanIntervalMs = 600L,
+            minBuffRecastSec = 480,
+            skillKeys = listOf(healKey, atkKey, buffKey),
+            activeBuffs = listOf(buffDef),
+            buffLinks = listOf(
+                BuffKeyLink(
+                    id = "link-haste",
+                    skillKeyId = buffKey.id,
+                    activeBuffId = buffDef.id,
+                    requiresSafeHp = false
+                )
+            ),
+            layouts = mapOf(
+                DualLayoutMode.SPLIT_50_50 to LayoutHudCalibration(
+                    layoutMode = DualLayoutMode.SPLIT_50_50,
+                    screenWidth = w,
+                    screenHeight = h,
+                    charHuds = mapOf(WebViewTarget.ACCOUNT_1 to a1Hud, WebViewTarget.ACCOUNT_2 to a2Hud)
+                )
+            ),
+            healRule = HealRuleConfig(
+                enabled = true,
+                targetChar = WebViewTarget.ACCOUNT_1,
+                healSkillKeyId = healKey.id,
+                triggerBelowPct = 85,
+                healCadenceMs = 60L
+            ),
+            combatConfig = CombatRotationConfig(
+                enabled = true,
+                manualCombatEnabled = true,
+                attackSkillKeyIds = listOf(atkKey.id),
+                attackIntervalMs = 80L
+            )
+        )
+
+        val engine = SmartFlyffEngine(repo, testDetector, bridge, BuffTimerOcrReader())
+        engine.start(profile)
+        delay(550L)
+        engine.stop()
+
+        val fired = dispatched.toList()
+        val healCount = fired.count { it == (WebViewTarget.ACCOUNT_2 to KeyEvent.KEYCODE_1) }
+        val atkCount = fired.count { it == (WebViewTarget.ACCOUNT_1 to KeyEvent.KEYCODE_9) }
+        val buffCount = fired.count { it == (WebViewTarget.ACCOUNT_2 to KeyEvent.KEYCODE_5) }
+
+        assertTrue("Rapid Heal should fire multiple times in 550ms (>= 3), got $healCount", healCount >= 3)
+        assertTrue("Multi-hit Attack should fire multiple times in 550ms (>= 3), got $atkCount", atkCount >= 3)
+        assertTrue("Buff with 8-min lockout must NOT spam-recast (expected <= 1), got $buffCount", buffCount <= 1)
+
+        bridge.detach(delegate)
+        frame.recycle()
+        repo.deleteTemplate(missingTpl.id)
         db.close()
     }
 }

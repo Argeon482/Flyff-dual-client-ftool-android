@@ -135,7 +135,7 @@ object FlyffMacroCompiler {
             description = "Exported from Smart Flyff Profile '${profile.name}' for ${layoutMode.label}.",
             targetAppLabel = "Dual Flyff",
             loopCount = 0, // Continuous infinite loop
-            pollingIntervalMs = profile.pollingIntervalMs,
+            pollingIntervalMs = profile.pollingIntervalMs.coerceIn(25L, 250L),
             steps = mainSteps,
             functions = functions
         )
@@ -193,9 +193,9 @@ object FlyffMacroCompiler {
         steps.add(
             DelayStep(
                 id = afterHealStepId,
-                label = "Heal cadence check",
-                minMs = heal.healCadenceMs.coerceAtLeast(80L),
-                maxMs = heal.healCadenceMs.coerceAtLeast(80L)
+                label = "Heal cadence",
+                minMs = heal.healCadenceMs.coerceIn(30L, 1200L),
+                maxMs = heal.healCadenceMs.coerceIn(30L, 1200L)
             )
         )
         // Check safe buff threshold separately if different from heal threshold
@@ -264,9 +264,9 @@ object FlyffMacroCompiler {
             steps.add(
                 DelayStep(
                     id = skipId,
-                    label = "After ${skill.label}",
-                    minMs = 40L,
-                    maxMs = 60L
+                    label = "Next vital check",
+                    minMs = 0L,
+                    maxMs = 0L
                 )
             )
         }
@@ -315,8 +315,8 @@ object FlyffMacroCompiler {
             steps.add(
                 DelayStep(
                     label = "Cast guard (${skill.label})",
-                    minMs = link.castGuardMs.coerceIn(250L, 1500L),
-                    maxMs = link.castGuardMs.coerceIn(250L, 1500L)
+                    minMs = link.castGuardMs.coerceIn(60L, 1500L),
+                    maxMs = link.castGuardMs.coerceIn(60L, 1500L)
                 )
             )
             // Cast strictly ONE buff per safe pass, then jump out to re-check HP!
@@ -330,8 +330,8 @@ object FlyffMacroCompiler {
                 DelayStep(
                     id = nextBuffCheckId,
                     label = "Next buff check",
-                    minMs = 15L,
-                    maxMs = 25L
+                    minMs = 0L,
+                    maxMs = 0L
                 )
             )
         }
@@ -341,8 +341,8 @@ object FlyffMacroCompiler {
                 DelayStep(
                     id = endStepId,
                     label = "Buff pass end",
-                    minMs = 20L,
-                    maxMs = 40L
+                    minMs = 0L,
+                    maxMs = 0L
                 )
             )
         }
@@ -391,9 +391,9 @@ object FlyffMacroCompiler {
         steps.add(
             DelayStep(
                 id = endStepId,
-                label = "Combat interval",
-                minMs = combat.attackIntervalMs.coerceAtLeast(80L),
-                maxMs = combat.attackIntervalMs.coerceAtLeast(80L)
+                label = "Combat cadence",
+                minMs = combat.attackIntervalMs.coerceIn(35L, 5000L),
+                maxMs = combat.attackIntervalMs.coerceIn(35L, 5000L)
             )
         )
         return steps
@@ -408,7 +408,7 @@ object FlyffMacroCompiler {
                     label = "Page F$page (${skill.owner.shortLabel})",
                     customKeyCode = ScannedSkillKey.keyCodeForFPage(page),
                     keyLabel = "F$page",
-                    holdMs = 50L,
+                    holdMs = 25L,
                     metaState = 0,
                     targetWebView = skill.owner
                 )
@@ -419,7 +419,7 @@ object FlyffMacroCompiler {
                 label = "${skill.label} (${skill.formattedKeyBinding()})",
                 customKeyCode = skill.keyCode,
                 keyLabel = skill.keyLabel,
-                holdMs = 90L,
+                holdMs = 30L,
                 metaState = skill.metaState,
                 targetWebView = skill.owner
             )

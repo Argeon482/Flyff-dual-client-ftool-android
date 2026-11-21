@@ -318,6 +318,9 @@ fun FlyffAutoSetupWizard(
                         3 -> FlyffBuffLinkerStep(
                             state = state,
                             onAutoLink = { controller.autoLinkBuffsByName() },
+                            onUpdateMinRecastSec = { sec ->
+                                controller.updateProfile { it.copy(minBuffRecastSec = sec.coerceIn(0, 3600)) }
+                            },
                             onAddLink = { skillId, buffId, sec -> controller.addBuffLink(skillId, buffId, sec) },
                             onUpdateLink = { controller.updateBuffLink(it) },
                             onRemoveLink = { controller.removeBuffLink(it) }
@@ -508,7 +511,7 @@ private fun FlyffProfileIntroStep(
                     value = profile.pollingIntervalMs.toString(),
                     onValueChange = { v ->
                         val ms = v.filter(Char::isDigit).toLongOrNull() ?: return@OutlinedTextField
-                        onUpdateProfile { it.copy(pollingIntervalMs = ms.coerceIn(80L, 1000L)) }
+                        onUpdateProfile { it.copy(pollingIntervalMs = ms.coerceIn(25L, 500L)) }
                     },
                     label = { Text("HP/Pot Poll (ms)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -548,6 +551,7 @@ private fun FlyffProfileIntroStep(
 private fun FlyffBuffLinkerStep(
     state: FlyffSetupUiState,
     onAutoLink: () -> Unit,
+    onUpdateMinRecastSec: (Int) -> Unit,
     onAddLink: (skillKeyId: String, activeBuffId: String, refreshBelowSec: Int) -> Unit,
     onUpdateLink: (BuffKeyLink) -> Unit,
     onRemoveLink: (String) -> Unit
@@ -559,6 +563,7 @@ private fun FlyffBuffLinkerStep(
     var selectedSkillId by remember(buffKeys) { mutableStateOf(buffKeys.firstOrNull()?.id) }
     var selectedBuffId by remember(profile.activeBuffs) { mutableStateOf(profile.activeBuffs.firstOrNull()?.id) }
     var refreshSecInput by remember { mutableStateOf("90") }
+    val minRecastMinutes = (profile.minBuffRecastSec / 60).coerceIn(0, 60)
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
         Surface(
@@ -596,10 +601,55 @@ private fun FlyffBuffLinkerStep(
                 }
 
                 Text(
-                    text = "Pair each buff skill key (A1 self-buff or A2 RM buff) with its active buff icon. The engine reads each icon's live MM:SS timer and casts strictly ONE buff at a time when HP is safe.",
+                    text = "Pair each buff skill key (A1 self-buff or A2 RM buff) with its active buff icon. Buffs run in the background and will not re-cast until the minimum cooldown elapses.",
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondary
                 )
+
+                // Minimum recast cooldown (default 8 minutes for 10-30 min Flyff buffs)
+                Surface(
+                    color = SlateSurface,
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, HairlineBorder),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Min Buff Recast Lockout",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = TextPrimary,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Wait at least ${minRecastMinutes}m after casting before recasting the same buff",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = TextDim
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = { onUpdateMinRecastSec(((minRecastMinutes - 1).coerceAtLeast(0)) * 60) },
+                            contentPadding = PaddingValues(horizontal = 10.dp),
+                            modifier = Modifier.height(40.dp).testTag("buff_min_recast_minus_btn")
+                        ) { Text("-1m", color = TextPrimary) }
+                        Text(
+                            text = "${minRecastMinutes}m",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = ElectricCyan,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold
+                        )
+                        OutlinedButton(
+                            onClick = { onUpdateMinRecastSec(((minRecastMinutes + 1).coerceAtMost(30)) * 60) },
+                            contentPadding = PaddingValues(horizontal = 10.dp),
+                            modifier = Modifier.height(40.dp).testTag("buff_min_recast_plus_btn")
+                        ) { Text("+1m", color = TextPrimary) }
+                    }
+                }
 
                 if (buffKeys.isEmpty() || profile.activeBuffs.isEmpty()) {
                     Text(
@@ -848,6 +898,18 @@ private fun FlyffRulesAndCombatStep(
                         )
                     }
 
+                    OutlinedTextField(
+                        value = heal.healCadenceMs.toString(),
+                        onValueChange = { v ->
+                            val ms = v.filter(Char::isDigit).toLongOrNull() ?: return@OutlinedTextField
+                            onUpdateHeal { it.copy(healCadenceMs = ms.coerceIn(30L, 1200L)) }
+                        },
+                        label = { Text("Heal Cadence (ms · min 30ms)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1048,9 +1110,9 @@ private fun FlyffRulesAndCombatStep(
                         value = combat.attackIntervalMs.toString(),
                         onValueChange = { v ->
                             val ms = v.filter(Char::isDigit).toLongOrNull() ?: return@OutlinedTextField
-                            onUpdateCombat { it.copy(attackIntervalMs = ms.coerceIn(120L, 5000L)) }
+                            onUpdateCombat { it.copy(attackIntervalMs = ms.coerceIn(35L, 5000L)) }
                         },
-                        label = { Text("Attack Cadence (ms)") },
+                        label = { Text("Attack Cadence (ms · min 35ms)") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()

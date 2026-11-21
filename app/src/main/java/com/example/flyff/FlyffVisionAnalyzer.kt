@@ -76,13 +76,18 @@ object FlyffVisionAnalyzer {
         val height = rect.height()
         if (width < 8 || height < 2) return 100
 
-        // Use strictly interior core rows (skip 1px top/bottom bevel when bar height >= 5px)
-        // so colored frame bevels along the depleted trough never false-match as filled!
+        // Use strictly interior core rows & columns (skip 1px frame bevels)
+        // so colored frame borders along the depleted trough never false-match as filled!
         val yInset = when {
             height >= 9 -> 2
             height >= 5 -> 1
             else -> 0
         }
+        val xInset = if (width >= 24) 1 else 0
+        val xStart = (rect.left + xInset).coerceIn(0, frame.width - 1)
+        val xEnd = (rect.right - xInset).coerceIn(xStart + 1, frame.width)
+        val innerWidth = (xEnd - xStart).coerceAtLeast(1)
+
         val yStart = (rect.top + yInset).coerceIn(0, frame.height - 1)
         val yEnd = (rect.bottom - 1 - yInset).coerceIn(yStart, frame.height - 1)
         val coreRows = (yEnd - yStart + 1).coerceAtLeast(1)
@@ -92,21 +97,21 @@ object FlyffVisionAnalyzer {
         val absMinDom = minDominantMarginFor(bar.vitalType)
 
         val hsv = FloatArray(3)
-        val colStrongRatio = FloatArray(width)
-        val colTextOnly = BooleanArray(width)
-        val colPeakVal = FloatArray(width)
-        val colPeakDom = IntArray(width)
-        val colRowHues = Array(width) { FloatArray(coreRows) }
-        val colRowSats = Array(width) { FloatArray(coreRows) }
-        val colRowVals = Array(width) { FloatArray(coreRows) }
-        val colRowDoms = Array(width) { IntArray(coreRows) }
-        val colRowIsText = Array(width) { BooleanArray(coreRows) }
+        val colStrongRatio = FloatArray(innerWidth)
+        val colTextOnly = BooleanArray(innerWidth)
+        val colPeakVal = FloatArray(innerWidth)
+        val colPeakDom = IntArray(innerWidth)
+        val colRowHues = Array(innerWidth) { FloatArray(coreRows) }
+        val colRowSats = Array(innerWidth) { FloatArray(coreRows) }
+        val colRowVals = Array(innerWidth) { FloatArray(coreRows) }
+        val colRowDoms = Array(innerWidth) { IntArray(coreRows) }
+        val colRowIsText = Array(innerWidth) { BooleanArray(coreRows) }
 
-        val strongRefVals = ArrayList<Float>(width)
-        val strongRefDoms = ArrayList<Int>(width)
+        val strongRefVals = ArrayList<Float>(innerWidth)
+        val strongRefDoms = ArrayList<Int>(innerWidth)
 
-        for (col in 0 until width) {
-            val x = (rect.left + col).coerceIn(0, frame.width - 1)
+        for (col in 0 until innerWidth) {
+            val x = (xStart + col).coerceIn(0, frame.width - 1)
             var nonTextRows = 0
             var strongHits = 0
             var maxVal = 0f
@@ -129,8 +134,8 @@ object FlyffVisionAnalyzer {
                 colRowVals[col][ri] = v
                 colRowDoms[col][ri] = dom
 
-                // White/silver digit pixels (e.g. "8402 / 10928") or crisp black 1px digit outline
-                val isWhiteDigit = s < 0.24f && v >= 0.56f
+                // White/silver/anti-aliased-gray digit pixels (e.g. "8402 / 10928") or crisp black 1px digit outline
+                val isWhiteDigit = s < 0.24f && v >= 0.36f
                 val isBlackOutline = v < 0.14f && s < 0.35f
                 if (isWhiteDigit || isBlackOutline) {
                     colRowIsText[col][ri] = true
@@ -172,10 +177,11 @@ object FlyffVisionAnalyzer {
         val dynMinVal = max(absMinVal, refVal * 0.68f)
         val dynMinDom = max(absMinDom, (refDom * 0.48f).toInt())
 
-        val columnFilled = BooleanArray(width)
+        val columnFilled = BooleanArray(innerWidth)
         var filledColumnCount = 0
+        val minConfirmedRows = if (coreRows >= 6) 2 else 1
 
-        for (col in 0 until width) {
+        for (col in 0 until innerWidth) {
             if (colTextOnly[col]) continue
             var nonTextRows = 0
             var dynHits = 0
@@ -194,7 +200,9 @@ object FlyffVisionAnalyzer {
                     dynHits++
                 }
             }
-            val confirmed = nonTextRows > 0 && (dynHits.toFloat() / nonTextRows.toFloat()) >= 0.45f
+            val confirmed = nonTextRows > 0 &&
+                dynHits >= minConfirmedRows &&
+                (dynHits.toFloat() / nonTextRows.toFloat()) >= 0.25f
             columnFilled[col] = confirmed
             if (confirmed) filledColumnCount++
         }
@@ -203,7 +211,7 @@ object FlyffVisionAnalyzer {
 
         // Find rightmost sustained filled run (at least 2 of 3 consecutive columns confirmed filled)
         var rightmostCol = -1
-        for (col in (width - 1) downTo 2) {
+        for (col in (innerWidth - 1) downTo 2) {
             val count = (if (columnFilled[col]) 1 else 0) +
                 (if (columnFilled[col - 1]) 1 else 0) +
                 (if (columnFilled[col - 2]) 1 else 0)
@@ -213,13 +221,13 @@ object FlyffVisionAnalyzer {
             }
         }
         if (rightmostCol < 0) {
-            // Very low fill (1-2px at far left)
-            val farLeftHits = (0 until min(6, width)).count { columnFilled[it] }
-            return if (farLeftHits >= 1) ((farLeftHits * 100f) / width.toFloat()).roundToInt().coerceIn(1, 100) else 0
+            // Very low fill (at least 2 interior columns at far left)
+            val farLeftHits = (0 until min(6, innerWidth)).count { columnFilled[it] }
+            return if (farLeftHits >= 2) ((farLeftHits * 100f) / innerWidth.toFloat()).roundToInt().coerceIn(1, 100) else 0
         }
         // Tolerate 1-2px inner dark bevel at the right tip so full bars reliably read 100%
-        if (rightmostCol >= width - 3) return 100
-        val pct = (((rightmostCol + 1).toFloat() / width.toFloat()) * 100f).roundToInt()
+        if (rightmostCol >= innerWidth - 3) return 100
+        val pct = (((rightmostCol + 1).toFloat() / innerWidth.toFloat()) * 100f).roundToInt()
         return pct.coerceIn(0, 100)
     }
 
@@ -232,11 +240,15 @@ object FlyffVisionAnalyzer {
         hud: CharacterHudRegions,
         livePaneRect: Rect? = null
     ): LiveHudVitalsMeasurement {
-        val initialHp = hud.hpBar?.let { measureBarFillPercent(frame, it) }
-        val initialMp = hud.mpBar?.let { measureBarFillPercent(frame, it) }
-        val initialFp = hud.fpBar?.let { measureBarFillPercent(frame, it) }
+        // Geometric HP auto-correction: MP and FP sit directly beneath HP with identical width,
+        // height, and vertical pitch (dy = fp.top - mp.top). If a saved HP rect drifted or was
+        // clipped while MP & FP are valid, immediately derive the exact HP slot from MP & FP!
+        val baseHud = snapHpFromMpFpGeometry(frame, hud)
+        val initialHp = baseHud.hpBar?.let { measureBarFillPercent(frame, it) }
+        val initialMp = baseHud.mpBar?.let { measureBarFillPercent(frame, it) }
+        val initialFp = baseHud.fpBar?.let { measureBarFillPercent(frame, it) }
 
-        val bars = listOfNotNull(hud.hpBar, hud.mpBar, hud.fpBar)
+        val bars = listOfNotNull(baseHud.hpBar, baseHud.mpBar, baseHud.fpBar)
         val anyBrightFill = (initialHp ?: 0) >= 3 || (initialMp ?: 0) >= 3 || (initialFp ?: 0) >= 3
         val looksAnchored = anyBrightFill &&
             bars.isNotEmpty() &&
@@ -247,8 +259,8 @@ object FlyffVisionAnalyzer {
                 hpPct = initialHp,
                 mpPct = initialMp,
                 fpPct = initialFp,
-                activeHud = hud,
-                reanchored = false
+                activeHud = baseHud,
+                reanchored = baseHud !== hud
             )
         }
 
@@ -308,10 +320,60 @@ object FlyffVisionAnalyzer {
                 hpPct = initialHp,
                 mpPct = initialMp,
                 fpPct = initialFp,
-                activeHud = hud,
-                reanchored = false
+                activeHud = baseHud,
+                reanchored = baseHud !== hud
             )
         }
+    }
+
+    /**
+     * Uses MP & FP's rock-solid uniform vertical spacing (`stepY = fp.top - mp.top`) and full width
+     * to validate/correct `hud.hpBar`. If `hpBar` is missing or disagrees with the MP/FP-predicted
+     * HP slot by > 4px vertically or > 6px horizontally, snaps HP directly to the MP/FP geometry.
+     */
+    private fun snapHpFromMpFpGeometry(frame: Bitmap, hud: CharacterHudRegions): CharacterHudRegions {
+        val mpSpec = hud.mpBar ?: return hud
+        val fpSpec = hud.fpBar ?: return hud
+        val mp = mpSpec.rect.toAndroidRect(frame.width, frame.height)
+        val fp = fpSpec.rect.toAndroidRect(frame.width, frame.height)
+        if (mp.width() < 20 || fp.width() < 20 || mp.height() < 3 || fp.height() < 3) return hud
+
+        val stepY = fp.top - mp.top
+        val avgH = ((mp.height() + fp.height()) / 2f).roundToInt().coerceAtLeast(4)
+        if (stepY < avgH + 1 || stepY > avgH * 4) return hud
+        if (abs(mp.left - fp.left) > 10 || abs(mp.right - fp.right) > 12) return hud
+
+        val expectedLeft = (mp.left + fp.left) / 2
+        val expectedRight = max(mp.right, fp.right).coerceAtLeast(expectedLeft + 24)
+        val expectedTop = (mp.top - stepY).coerceAtLeast(0)
+        val expectedBottom = (expectedTop + avgH).coerceAtMost(mp.top - 1)
+        if (expectedBottom - expectedTop < 3) return hud
+
+        val curHp = hud.hpBar?.rect?.toAndroidRect(frame.width, frame.height)
+        val hpIsConsistent = curHp != null &&
+            abs(curHp.top - expectedTop) <= 4 &&
+            abs(curHp.bottom - expectedBottom) <= 4 &&
+            abs(curHp.left - expectedLeft) <= 6 &&
+            abs(curHp.right - expectedRight) <= 6
+        if (hpIsConsistent) return hud
+
+        // Only override when MP & FP themselves look genuinely anchored on the frame
+        if (!hasPlausibleBarOrTrackVisual(frame, mpSpec) || !hasPlausibleBarOrTrackVisual(frame, fpSpec)) {
+            return hud
+        }
+
+        return hud.copy(
+            hpBar = (hud.hpBar ?: BarCalibrationSpec(VitalType.HP, mpSpec.rect)).copy(
+                rect = RectSpec.fromPixels(
+                    expectedLeft,
+                    expectedTop,
+                    expectedRight,
+                    expectedBottom,
+                    frame.width,
+                    frame.height
+                )
+            )
+        )
     }
 
     /**
@@ -488,69 +550,209 @@ object FlyffVisionAnalyzer {
         val searchLeft = safePane.left + (paneW * 0.035f).toInt()
         val searchRight = safePane.left + (paneW * searchRightFrac).toInt()
         val searchTop = safePane.top + (paneH * 0.005f).toInt()
-        val searchBottom = safePane.top + (paneH * 0.16f).toInt()
+        val searchBottom = safePane.top + (paneH * 0.165f).toInt()
+        val maxBarH = max(24, (paneH * 0.032f).toInt())
 
-        val hpFound = findHorizontalVitalBar(frame, searchLeft, searchTop, searchRight, searchBottom, VitalType.HP)
-        val fpSearchTop = hpFound?.bottom?.let { it + max(6, hpFound.height()) }
-            ?: (safePane.top + (paneH * 0.035f).toInt())
-        val fpFound = findHorizontalVitalBar(
-            frame,
-            hpFound?.let { (it.left - 14).coerceAtLeast(searchLeft) } ?: searchLeft,
-            fpSearchTop,
-            hpFound?.let { (it.right + 14).coerceAtMost(searchRight) } ?: searchRight,
-            (fpSearchTop + (paneH * 0.085f).toInt()).coerceAtMost(searchBottom + 50),
-            VitalType.FP
+        // 1. Anchor on paired (MP, FP) candidates FIRST — Flyff's MP (blue) and FP (green) bars
+        // ALWAYS sit immediately stacked (FP directly below MP, same left edge, same bar height)
+        // inside the top-left HUD, completely rejecting green buff timers below and blue sky above!
+        val mpCandidates = findHorizontalVitalBarCandidates(
+            frame, searchLeft, searchTop, searchRight, searchBottom, VitalType.MP, maxBarH
+        )
+        val fpCandidates = findHorizontalVitalBarCandidates(
+            frame, searchLeft, safePane.top + (paneH * 0.020f).toInt(), searchRight, (searchBottom + 12).coerceAtMost(safePane.bottom), VitalType.FP, maxBarH
         )
 
-        // Constrain MP search between HP and FP (and horizontally near HP/FP) to avoid matching blue sky
-        val mpSearchLeft = listOfNotNull(hpFound?.left, fpFound?.left).minOrNull()?.let { (it - 10).coerceAtLeast(searchLeft) }
-            ?: searchLeft
-        val mpSearchRight = listOfNotNull(hpFound?.right, fpFound?.right).maxOrNull()?.let { (it + 10).coerceAtMost(searchRight) }
-            ?: searchRight
-        val mpSearchTop = hpFound?.bottom ?: (safePane.top + (paneH * 0.020f).toInt())
-        val mpSearchBottom = fpFound?.top?.takeIf { it > mpSearchTop + 3 }
-            ?: (mpSearchTop + (paneH * 0.055f).toInt()).coerceAtMost(searchBottom + 30)
-        val mpFound = findHorizontalVitalBar(
-            frame,
-            mpSearchLeft,
-            mpSearchTop,
-            mpSearchRight,
-            mpSearchBottom,
-            VitalType.MP
-        )
+        var mpFound: Rect? = null
+        var fpFound: Rect? = null
+        var bestPairScore = Int.MIN_VALUE
+        val minPairBarW = max(36, (paneW * 0.052f).toInt())
+        for (mp in mpCandidates) {
+            for (fp in fpCandidates) {
+                if (fp.top <= mp.bottom) continue
+                val avgH = ((mp.height() + fp.height()) / 2f).roundToInt().coerceAtLeast(4)
+                val stepY = fp.top - mp.top
+                if (stepY < avgH + 1 || stepY > max(40, avgH * 3 + 6)) continue
+                if (abs(mp.left - fp.left) > 12) continue
+                if (abs(mp.height() - fp.height()) > max(4, avgH / 2)) continue
+                if (max(mp.width(), fp.width()) < minPairBarW) continue
+                // Require room above MP for the HP bar at `mp.top - stepY`
+                val predHpTop = mp.top - stepY
+                if (predHpTop < safePane.top - 4) continue
+                val predHpRect = Rect(
+                    min(mp.left, fp.left),
+                    predHpTop.coerceAtLeast(safePane.top),
+                    max(mp.right, fp.right),
+                    (predHpTop + avgH).coerceAtMost(mp.top - 1)
+                )
+                val hpSlotBonus = if (predHpRect.height() >= 3 && hasPlausibleBarOrTrackVisual(
+                        frame,
+                        BarCalibrationSpec(
+                            VitalType.HP,
+                            RectSpec.fromPixels(predHpRect.left, predHpRect.top, predHpRect.right, predHpRect.bottom, frame.width, frame.height)
+                        )
+                    )
+                ) 2500 else 0
+                val widthMatchBonus = if (abs(mp.right - fp.right) <= 10) 1200 else 0
+                val topPreferencePenalty = ((mp.top - safePane.top) * 8)
+                val score = (mp.width() + fp.width()) * avgH + hpSlotBonus + widthMatchBonus -
+                    abs(mp.left - fp.left) * 20 - topPreferencePenalty
+                if (score > bestPairScore) {
+                    bestPairScore = score
+                    mpFound = mp
+                    fpFound = fp
+                }
+            }
+        }
 
-        // Consensus left/right alignment across HP, MP, FP (prevents a stray red window border on HP from stretching MP/FP!)
-        val detectedBars = listOfNotNull(hpFound, mpFound, fpFound)
+        // Single-bar fallbacks if either MP or FP is completely empty (0%)
+        if (mpFound == null && fpFound == null) {
+            mpFound = mpCandidates.firstOrNull { it.width() >= minPairBarW } ?: mpCandidates.firstOrNull()
+            fpFound = if (mpFound != null) {
+                val mp = mpFound!!
+                fpCandidates.firstOrNull { fp ->
+                    fp.top > mp.bottom &&
+                        (fp.top - mp.top) <= max(40, mp.height() * 3 + 6) &&
+                        abs(fp.left - mp.left) <= 14
+                }
+            } else {
+                fpCandidates.firstOrNull { it.bottom <= searchBottom && it.width() >= minPairBarW }
+                    ?: fpCandidates.firstOrNull { it.bottom <= searchBottom }
+            }
+        }
+
+        // 2. Geometrically predict HP directly from MP & FP spacing when both are present,
+        // then probe HP strictly inside that predicted slot so red portraits/borders never hijack HP!
+        val mpFpPaired = mpFound != null && fpFound != null &&
+            fpFound.top > mpFound.bottom &&
+            (fpFound.top - mpFound.top) in max(5, ((mpFound.height() + fpFound.height()) / 2) + 1)..max(48, ((mpFound.height() + fpFound.height()) * 2))
+
+        val hpFound: Rect? = if (mpFpPaired) {
+            val mp = mpFound!!
+            val fp = fpFound!!
+            val stepY = fp.top - mp.top
+            val barH = ((mp.height() + fp.height()) / 2f).roundToInt().coerceAtLeast(4)
+            val predTop = (mp.top - stepY).coerceAtLeast(safePane.top)
+            val predBot = (predTop + barH).coerceAtMost(mp.top - 1)
+            val probeL = (min(mp.left, fp.left) - 10).coerceAtLeast(searchLeft)
+            val probeR = (max(mp.right, fp.right) + 10).coerceAtMost(searchRight)
+            val probeT = (predTop - max(5, barH / 2)).coerceAtLeast(safePane.top)
+            val probeB = (predBot + max(4, barH / 2)).coerceAtMost(mp.top - 1)
+            val candidate = if (probeB > probeT + 2) {
+                findHorizontalVitalBar(frame, probeL, probeT, probeR, probeB, VitalType.HP)
+            } else {
+                null
+            }
+            // Accept detected HP vertical snap only if its center agrees tightly with the MP/FP-derived slot
+            val predCenterY = (predTop + predBot) / 2
+            if (candidate != null && abs(candidate.centerY() - predCenterY) <= max(4, barH / 2)) {
+                candidate
+            } else {
+                null // Will use the exact MP/FP geometrically derived HP rect below!
+            }
+        } else {
+            // Only 0 or 1 of MP/FP was visible (e.g. MP or FP empty at 0%): locate HP in top band
+            val hpMaxBot = mpFound?.top
+                ?: fpFound?.let { (it.top - max(6, it.height())).coerceAtLeast(searchTop + 6) }
+                ?: searchBottom
+            val hpMinL = listOfNotNull(mpFound?.left, fpFound?.left).minOrNull()?.let { (it - 16).coerceAtLeast(searchLeft) }
+                ?: searchLeft
+            val hpMaxR = listOfNotNull(mpFound?.right, fpFound?.right).maxOrNull()?.let { (it + 16).coerceAtMost(searchRight) }
+                ?: searchRight
+            findHorizontalVitalBar(frame, hpMinL, searchTop, hpMaxR, hpMaxBot, VitalType.HP)
+        }
+
+        // 3. Consensus horizontal alignment: prioritize MP & FP (almost always full-width and clean)
+        // so depleted HP never shortens bar width and red borders never stretch it!
+        val primaryWidthBars = listOfNotNull(mpFound, fpFound).ifEmpty { listOfNotNull(hpFound) }
+        val allDetectedBars = listOfNotNull(hpFound, mpFound, fpFound)
         val alignedLeft = resolveBarEdgeConsensus(
-            values = detectedBars.map { it.left },
+            values = primaryWidthBars.map { it.left }.let { if (it.size >= 2) it else allDetectedBars.map { b -> b.left } },
             fallback = safePane.left + (paneW * 0.078f).toInt(),
             preferTighterInner = true
         )
-        val alignedRight = resolveBarEdgeConsensus(
-            values = detectedBars.map { it.right },
-            fallback = safePane.left + (paneW * 0.151f).toInt(),
-            preferTighterInner = false
-        ).coerceAtLeast(alignedLeft + 24)
+        val alignedRight = if (mpFpPaired) {
+            val mpR = mpFound!!.right
+            val fpR = fpFound!!.right
+            if (abs(mpR - fpR) <= 6) (mpR + fpR) / 2 else max(mpR, fpR)
+        } else {
+            resolveBarEdgeConsensus(
+                values = allDetectedBars.map { it.right },
+                fallback = safePane.left + (paneW * 0.151f).toInt(),
+                preferTighterInner = false
+            )
+        }.coerceAtLeast(alignedLeft + 24)
 
         val barWidth = (alignedRight - alignedLeft).coerceAtLeast(40)
-        val defaultBarH = detectedBars
+        val defaultBarH = primaryWidthBars
             .map { it.height() }
             .average()
             .takeIf { !it.isNaN() && it >= 4.0 }
-            ?.toInt()
+            ?.roundToInt()
+            ?: allDetectedBars.map { it.height() }.average().takeIf { !it.isNaN() && it >= 4.0 }?.roundToInt()
             ?: max(8, (paneH * 0.012f).toInt())
 
-        val hpRect = hpFound?.let { Rect(alignedLeft, it.top, alignedRight, it.bottom) }
-            ?: Rect(
-                alignedLeft,
-                safePane.top + (paneH * 0.036f).toInt(),
-                alignedRight,
-                safePane.top + (paneH * 0.036f).toInt() + defaultBarH
-            )
-        val mpRect = mpFound?.let { Rect(alignedLeft, it.top, alignedRight, it.bottom) }
-            ?: Rect(alignedLeft, hpRect.bottom + max(4, defaultBarH / 2), alignedRight, hpRect.bottom + max(4, defaultBarH / 2) + defaultBarH)
-        val fpRect = fpFound?.let { Rect(alignedLeft, it.top, alignedRight, it.bottom) }
-            ?: Rect(alignedLeft, mpRect.bottom + max(4, defaultBarH / 2), alignedRight, mpRect.bottom + max(4, defaultBarH / 2) + defaultBarH)
+        // 4. Construct final evenly spaced HP, MP, FP rects using MP <-> FP spacing for HP!
+        // Always lock HP height to `defaultBarH` (from MP & FP) and constrain HP vertical position
+        // within ±2px of `mp.top - stepY` so warm brown HUD borders above HP never bleed into HP!
+        val mpRect: Rect
+        val fpRect: Rect
+        val hpRect: Rect
+        if (mpFpPaired) {
+            val mp = mpFound!!
+            val fp = fpFound!!
+            val stepY = fp.top - mp.top
+            val predHpTop = (mp.top - stepY).coerceAtLeast(safePane.top)
+            val predHpBot = (predHpTop + defaultBarH).coerceAtMost(mp.top - 1)
+            mpRect = Rect(alignedLeft, mp.top, alignedRight, mp.bottom)
+            fpRect = Rect(alignedLeft, fp.top, alignedRight, fp.bottom)
+            hpRect = if (hpFound != null) {
+                val snappedTop = (hpFound.bottom - defaultBarH)
+                    .coerceIn((predHpTop - 2).coerceAtLeast(safePane.top), predHpTop + 2)
+                val snappedBot = (snappedTop + defaultBarH).coerceAtMost(mp.top - 1)
+                Rect(alignedLeft, snappedTop, alignedRight, snappedBot)
+            } else {
+                Rect(alignedLeft, predHpTop, alignedRight, predHpBot)
+            }
+        } else {
+            val defaultStepY = max(defaultBarH + 4, (defaultBarH * 1.48f).roundToInt())
+            hpRect = when {
+                hpFound != null -> Rect(alignedLeft, hpFound.top, alignedRight, hpFound.bottom)
+                mpFound != null -> {
+                    val t = (mpFound.top - defaultStepY).coerceAtLeast(safePane.top)
+                    Rect(alignedLeft, t, alignedRight, (t + defaultBarH).coerceAtMost(mpFound.top - 1))
+                }
+                fpFound != null -> {
+                    val t = (fpFound.top - defaultStepY * 2).coerceAtLeast(safePane.top)
+                    Rect(alignedLeft, t, alignedRight, t + defaultBarH)
+                }
+                else -> {
+                    val t = safePane.top + (paneH * 0.036f).toInt()
+                    Rect(alignedLeft, t, alignedRight, t + defaultBarH)
+                }
+            }
+            mpRect = when {
+                mpFound != null -> Rect(alignedLeft, mpFound.top, alignedRight, mpFound.bottom)
+                hpFound != null && fpFound != null && fpFound.top > hpFound.bottom + 4 -> {
+                    // MP sits dead-center between HP and FP!
+                    val midTop = (hpFound.top + fpFound.top) / 2
+                    Rect(alignedLeft, midTop, alignedRight, midTop + defaultBarH)
+                }
+                fpFound != null -> {
+                    val t = (fpFound.top - defaultStepY).coerceAtLeast(safePane.top)
+                    Rect(alignedLeft, t, alignedRight, (t + defaultBarH).coerceAtMost(fpFound.top - 1))
+                }
+                else -> Rect(alignedLeft, hpRect.top + defaultStepY, alignedRight, hpRect.top + defaultStepY + defaultBarH)
+            }
+            fpRect = when {
+                fpFound != null -> Rect(alignedLeft, fpFound.top, alignedRight, fpFound.bottom)
+                hpFound != null && mpFound != null && mpFound.top > hpFound.top -> {
+                    val stepY = mpFound.top - hpFound.top
+                    Rect(alignedLeft, mpFound.top + stepY, alignedRight, mpFound.top + stepY + defaultBarH)
+                }
+                else -> Rect(alignedLeft, mpRect.top + defaultStepY, alignedRight, mpRect.top + defaultStepY + defaultBarH)
+            }
+        }
 
         // Locate the Active Buff panel directly below HP/MP/FP without bleeding into Party frames on the right.
         // Scale relative to the detected character HUD window width so both wide Split-50/50 AND square/portrait Single views match accurately.
@@ -561,7 +763,7 @@ object FlyffVisionAnalyzer {
                 (alignedRight + 8).coerceAtMost(safePane.right),
                 min(safePane.right, nominalBuffLeft + (hudWindowW * 1.36f).toInt())
             )
-        val buffSearchTop = (fpRect.bottom + max(8, defaultBarH)).coerceAtMost(safePane.bottom - 50)
+        val buffSearchTop = (fpRect.bottom + max(6, defaultBarH / 2)).coerceAtMost(safePane.bottom - 50)
         val refinedBuffPanel = detectMobileBuffPanelBounds(
             frame = frame,
             safePane = safePane,
@@ -862,7 +1064,7 @@ object FlyffVisionAnalyzer {
             val bands = mutableListOf<BuffRowBand>()
             for (tb in distinctTimers.take(maxRows)) {
                 val rBot = (safeT + tb.last + 2).coerceAtMost(safeB)
-                val rTop = (rBot - tileH).coerceAtLeast(safeT)
+                val rTop = (rBot - tileH).coerceAtLeast(0)
                 if (rBot - rTop >= 18) {
                     bands.add(BuffRowBand(top = rTop, bottom = rBot, timerAnchored = true))
                 }
@@ -1029,6 +1231,173 @@ object FlyffVisionAnalyzer {
     }
 
     /**
+     * Returns ALL plausible horizontal vital bar bands inside the search box (filtered by maxBarHeight
+     * to reject tall blue sky or grass patches), sorted strongest-first.
+     */
+    private fun findHorizontalVitalBarCandidates(
+        frame: Bitmap,
+        left: Int,
+        top: Int,
+        right: Int,
+        bottom: Int,
+        vitalType: VitalType,
+        maxBarHeight: Int = 28
+    ): List<Rect> {
+        val safeL = left.coerceIn(0, frame.width - 1)
+        val safeR = right.coerceIn(safeL + 1, frame.width)
+        val safeT = top.coerceIn(0, frame.height - 1)
+        val safeB = bottom.coerceIn(safeT + 1, frame.height)
+        val searchW = safeR - safeL
+        if (searchW < 16 || safeB - safeT < 3) return emptyList()
+        val hsv = FloatArray(3)
+        // Allow bridging centered white/light-gray numeric text (e.g. "12803 / 12803") and
+        // thin 1-4px dark digit outlines, while refusing to bridge across dark/colored gaps
+        // between separate buff icon tiles!
+        val maxWhiteTextGap = max(24, (searchW * 0.38f).toInt()).coerceAtMost(84)
+        val maxDarkOutlineGap = 10
+        val maxSoftTintGap = 10
+        val maxNonTextGap = 4
+        val minDom = when (vitalType) {
+            VitalType.HP -> 36
+            VitalType.MP -> 28
+            VitalType.FP -> 24
+        }
+
+        val rowCount = safeB - safeT
+        val rowCounts = IntArray(rowCount)
+        val rowDensities = FloatArray(rowCount)
+        val rowSegLeft = IntArray(rowCount) { -1 }
+        val rowSegRight = IntArray(rowCount) { -1 }
+
+        for (y in safeT until safeB) {
+            val rowIdx = y - safeT
+            var bestRunHits = 0
+            var bestRunDensity = 0f
+            var bestRunStart = -1
+            var bestRunEnd = -1
+            var curStart = -1
+            var curEnd = -1
+            var curHits = 0
+            var whiteTextRun = 0
+            var darkOutlineRun = 0
+            var softTintRun = 0
+            var nonTextRun = 0
+
+            fun flushRun() {
+                if (curStart >= 0 && curHits > 0) {
+                    val span = (curEnd - curStart + 1).coerceAtLeast(1)
+                    val density = curHits.toFloat() / span.toFloat()
+                    // Middle text rows on compact bars ("12803 / 12803") can have ~30% visible color
+                    if (density >= 0.24f && curHits > bestRunHits) {
+                        bestRunHits = curHits
+                        bestRunDensity = density
+                        bestRunStart = curStart
+                        bestRunEnd = curEnd
+                    }
+                }
+                curStart = -1
+                curEnd = -1
+                curHits = 0
+                whiteTextRun = 0
+                darkOutlineRun = 0
+                softTintRun = 0
+                nonTextRun = 0
+            }
+
+            for (x in safeL until safeR) {
+                val pixel = frame.getPixel(x, y)
+                val r = (pixel shr 16) and 0xFF
+                val g = (pixel shr 8) and 0xFF
+                val b = pixel and 0xFF
+                Color.colorToHSV(pixel, hsv)
+                val match = matchesVitalColor(vitalType, hsv[0], hsv[1], hsv[2], minSat = 0.34f, minVal = 0.30f) &&
+                    dominantChannelMargin(vitalType, r, g, b) >= minDom
+                if (match) {
+                    if (curStart < 0) curStart = x
+                    curEnd = x
+                    curHits++
+                    whiteTextRun = 0
+                    darkOutlineRun = 0
+                    softTintRun = 0
+                    nonTextRun = 0
+                } else if (curStart >= 0) {
+                    val isWhiteDigit = hsv[1] < 0.36f && hsv[2] >= 0.34f
+                    val isDarkOutline = max(r, max(g, b)) < 120
+                    val isSoftVitalTint = matchesVitalColor(vitalType, hsv[0], hsv[1], hsv[2], minSat = 0.18f, minVal = 0.18f)
+                    when {
+                        isWhiteDigit -> {
+                            whiteTextRun++
+                            darkOutlineRun = 0
+                            softTintRun = 0
+                            nonTextRun = 0
+                            if (whiteTextRun > maxWhiteTextGap) flushRun()
+                        }
+                        isDarkOutline -> {
+                            darkOutlineRun++
+                            nonTextRun = 0
+                            if (darkOutlineRun > maxDarkOutlineGap) flushRun()
+                        }
+                        isSoftVitalTint -> {
+                            softTintRun++
+                            nonTextRun = 0
+                            if (softTintRun > maxSoftTintGap) flushRun()
+                        }
+                        else -> {
+                            nonTextRun++
+                            if (nonTextRun > maxNonTextGap) flushRun()
+                        }
+                    }
+                }
+            }
+            flushRun()
+            rowCounts[rowIdx] = bestRunHits
+            rowDensities[rowIdx] = bestRunDensity
+            rowSegLeft[rowIdx] = bestRunStart
+            rowSegRight[rowIdx] = bestRunEnd
+        }
+
+        val candidates = mutableListOf<Pair<Int, Rect>>()
+        var i = 0
+        while (i < rowCount) {
+            if (rowCounts[i] >= 14) {
+                val start = i
+                var score = 0
+                var peakDensity = 0f
+                while (i < rowCount && rowCounts[i] >= 12) {
+                    score += rowCounts[i]
+                    if (rowDensities[i] > peakDensity) peakDensity = rowDensities[i]
+                    i++
+                }
+                val end = i - 1
+                val bh = end - start + 1
+                // Real vital bars have solid colored top/bottom rows above/below digits (peakDensity >= 0.55)
+                if (bh in 3..maxBarHeight && peakDensity >= 0.55f) {
+                    val lefts = mutableListOf<Int>()
+                    val rights = mutableListOf<Int>()
+                    for (rIdx in start..end) {
+                        if (rowSegLeft[rIdx] >= 0 && rowSegRight[rIdx] > rowSegLeft[rIdx]) {
+                            lefts.add(rowSegLeft[rIdx])
+                            rights.add(rowSegRight[rIdx])
+                        }
+                    }
+                    if (lefts.isNotEmpty() && rights.isNotEmpty()) {
+                        lefts.sort()
+                        rights.sort()
+                        val medL = lefts[lefts.size / 2]
+                        val medR = rights[rights.size / 2]
+                        if (medR - medL >= 16) {
+                            candidates.add(score to Rect(medL, safeT + start, medR + 1, safeT + end + 1))
+                        }
+                    }
+                }
+            } else {
+                i++
+            }
+        }
+        return candidates.sortedByDescending { it.first }.map { it.second }
+    }
+
+    /**
      * Finds a horizontal HP/MP/FP vital bar inside the given search box using longest contiguous
      * colored runs per row (allowing small white numeric text gaps like "12803 / 12803", while
      * refusing to bridge across empty gaps or window borders to stray frame pixels).
@@ -1040,109 +1409,7 @@ object FlyffVisionAnalyzer {
         right: Int,
         bottom: Int,
         vitalType: VitalType
-    ): Rect? {
-        val safeL = left.coerceIn(0, frame.width - 1)
-        val safeR = right.coerceIn(safeL + 1, frame.width)
-        val safeT = top.coerceIn(0, frame.height - 1)
-        val safeB = bottom.coerceIn(safeT + 1, frame.height)
-        val searchW = safeR - safeL
-        val hsv = FloatArray(3)
-
-        // Allow bridging white/black digit overlays inside the bar, never wide exterior gaps
-        val maxTextGap = max(12, (searchW * 0.14f).toInt()).coerceAtMost(28)
-
-        val rowCounts = IntArray(safeB - safeT)
-        val rowSegLeft = IntArray(safeB - safeT) { -1 }
-        val rowSegRight = IntArray(safeB - safeT) { -1 }
-
-        for (y in safeT until safeB) {
-            val rowIdx = y - safeT
-            var bestRunHits = 0
-            var bestRunStart = -1
-            var bestRunEnd = -1
-
-            var curStart = -1
-            var curEnd = -1
-            var curHits = 0
-            var gapCount = 0
-
-            for (x in safeL until safeR) {
-                Color.colorToHSV(frame.getPixel(x, y), hsv)
-                val match = matchesVitalColor(vitalType, hsv[0], hsv[1], hsv[2], minSat = 0.34f, minVal = 0.28f)
-                if (match) {
-                    if (curStart < 0) curStart = x
-                    curEnd = x
-                    curHits++
-                    gapCount = 0
-                } else if (curStart >= 0) {
-                    gapCount++
-                    if (gapCount > maxTextGap) {
-                        if (curHits > bestRunHits) {
-                            bestRunHits = curHits
-                            bestRunStart = curStart
-                            bestRunEnd = curEnd
-                        }
-                        curStart = -1
-                        curEnd = -1
-                        curHits = 0
-                        gapCount = 0
-                    }
-                }
-            }
-            if (curStart >= 0 && curHits > bestRunHits) {
-                bestRunHits = curHits
-                bestRunStart = curStart
-                bestRunEnd = curEnd
-            }
-
-            rowCounts[rowIdx] = bestRunHits
-            rowSegLeft[rowIdx] = bestRunStart
-            rowSegRight[rowIdx] = bestRunEnd
-        }
-
-        val maxRowHits = rowCounts.maxOrNull() ?: 0
-        if (maxRowHits < 14) return null
-
-        val threshold = max(10, (maxRowHits * 0.45f).toInt())
-        var bestStart = -1
-        var bestEnd = -1
-        var bestScore = 0
-        var curStart = -1
-        var curScore = 0
-
-        for (i in rowCounts.indices) {
-            if (rowCounts[i] >= threshold) {
-                if (curStart < 0) curStart = i
-                curScore += rowCounts[i]
-                if (curScore > bestScore) {
-                    bestScore = curScore
-                    bestStart = curStart
-                    bestEnd = i
-                }
-            } else {
-                curStart = -1
-                curScore = 0
-            }
-        }
-        if (bestStart < 0 || bestEnd < bestStart) return null
-
-        val lefts = mutableListOf<Int>()
-        val rights = mutableListOf<Int>()
-        for (i in bestStart..bestEnd) {
-            if (rowSegLeft[i] >= 0 && rowSegRight[i] > rowSegLeft[i]) {
-                lefts.add(rowSegLeft[i])
-                rights.add(rowSegRight[i])
-            }
-        }
-        if (lefts.isEmpty() || rights.isEmpty()) return null
-        lefts.sort()
-        rights.sort()
-        val medianLeft = lefts[lefts.size / 2]
-        val medianRight = rights[rights.size / 2]
-        if (medianRight - medianLeft < 16) return null
-
-        return Rect(medianLeft, safeT + bestStart, medianRight + 1, safeT + bestEnd + 1)
-    }
+    ): Rect? = findHorizontalVitalBarCandidates(frame, left, top, right, bottom, vitalType, maxBarHeight = 32).firstOrNull()
 
     /**
      * Auto-segments Flyff active buff icons inside `hud.buffGridRegion` using green-timer-anchored

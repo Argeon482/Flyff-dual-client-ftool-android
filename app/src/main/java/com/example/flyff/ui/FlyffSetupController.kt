@@ -1128,7 +1128,7 @@ class FlyffSetupController(
                             vitalType = vital,
                             triggerBelowPct = defaultPct,
                             skillKeyId = key.id,
-                            cooldownMs = 1500L
+                            cooldownMs = 350L
                         )
                     )
                 }
