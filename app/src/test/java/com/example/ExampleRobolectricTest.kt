@@ -64,10 +64,10 @@ import org.robolectric.annotation.Config
 class ExampleRobolectricTest {
 
     @Test
-    fun appName_isShizuMacro() {
+    fun appName_isFlyffFtools() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val appName = context.getString(R.string.app_name)
-        assertEquals("ShizuMacro", appName)
+        assertEquals("Flyff Ftools", appName)
     }
 
     @Test
