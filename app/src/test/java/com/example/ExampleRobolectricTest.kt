@@ -2,6 +2,7 @@ package com.example
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -19,6 +20,7 @@ import com.example.dualweb.DualWebPreferences
 import com.example.dualweb.WebViewTextInputHelper
 import com.example.engine.ExecutionStatus
 import com.example.engine.MacroInterpreter
+import com.example.flyff.FlyffVisionAnalyzer
 import com.example.model.BranchAction
 import com.example.model.CallFunctionStep
 import com.example.model.IfImageStep
@@ -755,5 +757,165 @@ class ExampleRobolectricTest {
         assertFalse(prefs.load().autoResetCacheOnReopen)
         prefs.save(DualWebConfigState(autoResetCacheOnReopen = true))
         assertTrue(prefs.load().autoResetCacheOnReopen)
+    }
+
+    private fun fillBitmapRect(bmp: Bitmap, left: Int, top: Int, right: Int, bottom: Int, color: Int) {
+        val l = left.coerceIn(0, bmp.width)
+        val t = top.coerceIn(0, bmp.height)
+        val r = right.coerceIn(l, bmp.width)
+        val b = bottom.coerceIn(t, bmp.height)
+        val rw = r - l
+        val rh = b - t
+        if (rw <= 0 || rh <= 0) return
+        val row = IntArray(rw) { color }
+        for (y in t until b) {
+            bmp.setPixels(row, 0, rw, l, y, rw, 1)
+        }
+    }
+
+    @Test
+    fun flyffVisionAnalyzer_detectsOnlyTenSlotKeybarAndTightCropsIcons() {
+        val w = 1812
+        val h = 1088
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        fillBitmapRect(bmp, 0, 0, w, h, Color.rgb(60, 85, 110)) // Game world background
+
+        val tanBorder = Color.rgb(180, 130, 95)
+        val creamBg = Color.rgb(245, 240, 230)
+        val emptyDot = Color.rgb(175, 170, 165)
+
+        // Draw Original View bottom taskbar strip
+        fillBitmapRect(bmp, 0, h - 56, w, h, tanBorder)
+        // Left 20-slot clickable shortcut tray (MUST BE IGNORED by 1-0 key scanner)
+        fillBitmapRect(bmp, 262, h - 50, 1102, h - 10, creamBg)
+        val decoyColor = Color.rgb(220, 40, 180)
+        for (i in 0 until 6) {
+            val dx = 270 + i * 41
+            fillBitmapRect(bmp, dx, h - 49, dx + 37, h - 12, decoyColor)
+        }
+
+        // Right 10-slot 1-0 keybar tray (x=1112..1523, icon y=[h-49 .. h-12], 37x37 icons, 41.1px pitch)
+        fillBitmapRect(bmp, 1112, h - 50, 1523, h - 10, creamBg)
+        val occupiedIndices = setOf(0, 1, 7, 9) // Keys 1, 2, 8, 0
+        val iconTop = h - 49
+        val iconSize = 37
+        for (slot in 0 until 10) {
+            val sx = (1114f + slot * 41.1f).toInt()
+            if (slot in occupiedIndices) {
+                val frameColor = Color.rgb(45, 25, 15)
+                val fillColor = when (slot) {
+                    0 -> Color.rgb(240, 190, 30)
+                    1 -> Color.rgb(230, 70, 40)
+                    7 -> Color.rgb(40, 170, 235)
+                    else -> Color.rgb(160, 80, 230)
+                }
+                fillBitmapRect(bmp, sx, iconTop, sx + iconSize, iconTop + iconSize, frameColor)
+                fillBitmapRect(bmp, sx + 2, iconTop + 2, sx + iconSize - 2, iconTop + iconSize - 2, fillColor)
+            } else {
+                // Tiny gray center dot in empty slot
+                fillBitmapRect(
+                    bmp,
+                    sx + iconSize / 2 - 2,
+                    iconTop + iconSize / 2 - 2,
+                    sx + iconSize / 2 + 2,
+                    iconTop + iconSize / 2 + 2,
+                    emptyDot
+                )
+            }
+        }
+
+        val scan = FlyffVisionAnalyzer.autoDetectOriginalViewTaskbarSlots(
+            frame = bmp,
+            paneRect = Rect(0, 0, w, h),
+            owner = WebViewTarget.ACCOUNT_2
+        )
+        assertEquals(listOf(0, 1, 7, 9), scan.detectedSlots.map { it.slotIndex })
+        assertTrue(scan.previewStripBitmap != null)
+        scan.detectedSlots.forEach { slot ->
+            assertTrue("Expected tight icon width ~37px, got ${slot.bounds.width()}", slot.bounds.width() in 35..39)
+            assertTrue("Expected tight icon height ~37px, got ${slot.bounds.height()}", slot.bounds.height() in 35..39)
+            slot.iconBitmap.recycle()
+        }
+        scan.previewStripBitmap?.recycle()
+        bmp.recycle()
+    }
+
+    @Test
+    fun flyffVisionAnalyzer_verifiesRealFlyffScreenshotsIfPresent() {
+        val dir = java.io.File("../public/assets/aistudio")
+        if (!dir.exists()) return
+
+        // 1. Single Original View (Fork22 RM: all 10 1-0 slots occupied)
+        val f441 = java.io.File(dir, "Screenshot_20261121_090441_ShizuMacro_c5dac6e3.jpg")
+        if (f441.exists()) {
+            val bmp = BitmapFactory.decodeFile(f441.absolutePath)!!
+            val scan = FlyffVisionAnalyzer.autoDetectOriginalViewTaskbarSlots(
+                bmp, Rect(0, 0, bmp.width, bmp.height), WebViewTarget.ACCOUNT_2
+            )
+            assertEquals((0..9).toList(), scan.detectedSlots.map { it.slotIndex })
+            scan.detectedSlots.forEach { slot ->
+                assertTrue("RM slot ${slot.slotIndex} w=${slot.bounds.width()}", slot.bounds.width() in 33..41)
+                assertTrue("RM slot ${slot.slotIndex} h=${slot.bounds.height()}", slot.bounds.height() in 33..41)
+                slot.iconBitmap.recycle()
+            }
+            scan.previewStripBitmap?.recycle()
+            bmp.recycle()
+        }
+
+        // 2. Single Original View (oOXOo2 Psy: 7 slots at 0,1,2,3,7,8,9 + distracting items on left 20 click bar)
+        val f429 = java.io.File(dir, "Screenshot_20261121_090429_ShizuMacro_80558010.jpg")
+        if (f429.exists()) {
+            val bmp = BitmapFactory.decodeFile(f429.absolutePath)!!
+            val scan = FlyffVisionAnalyzer.autoDetectOriginalViewTaskbarSlots(
+                bmp, Rect(0, 0, bmp.width, bmp.height), WebViewTarget.ACCOUNT_1
+            )
+            assertEquals(listOf(0, 1, 2, 3, 7, 8, 9), scan.detectedSlots.map { it.slotIndex })
+            scan.detectedSlots.forEach { it.iconBitmap.recycle() }
+            scan.previewStripBitmap?.recycle()
+            bmp.recycle()
+        }
+
+        // 3. Split Original View (090407: Top=Fork22 10/10, Bottom=oOXOo2 7/10)
+        val f407 = java.io.File(dir, "Screenshot_20261121_090407_ShizuMacro_418ba37f.jpg")
+        if (f407.exists()) {
+            val bmp = BitmapFactory.decodeFile(f407.absolutePath)!!
+            val topScan = FlyffVisionAnalyzer.autoDetectOriginalViewTaskbarSlots(
+                bmp, Rect(0, 0, bmp.width, bmp.height / 2), WebViewTarget.ACCOUNT_2
+            )
+            val botScan = FlyffVisionAnalyzer.autoDetectOriginalViewTaskbarSlots(
+                bmp, Rect(0, bmp.height / 2, bmp.width, bmp.height), WebViewTarget.ACCOUNT_1
+            )
+            assertEquals((0..9).toList(), topScan.detectedSlots.map { it.slotIndex })
+            assertEquals(listOf(0, 1, 2, 3, 7, 8, 9), botScan.detectedSlots.map { it.slotIndex })
+            topScan.detectedSlots.forEach { it.iconBitmap.recycle() }
+            botScan.detectedSlots.forEach { it.iconBitmap.recycle() }
+            topScan.previewStripBitmap?.recycle()
+            botScan.previewStripBitmap?.recycle()
+            bmp.recycle()
+        }
+
+        // 4. Mobile UI 50/50 Split (090341: HP/MP/FP bars + Active Buff tiles)
+        val f341 = java.io.File(dir, "Screenshot_20261121_090341_ShizuMacro_62e243ba.jpg")
+        if (f341.exists()) {
+            val bmp = BitmapFactory.decodeFile(f341.absolutePath)!!
+            val topHud = FlyffVisionAnalyzer.autoDetectMobileHudBars(
+                bmp, Rect(0, 0, bmp.width, bmp.height / 2), WebViewTarget.ACCOUNT_2
+            )
+            val topTiles = FlyffVisionAnalyzer.autoDetectActiveBuffTiles(bmp, topHud)
+            val botHud = FlyffVisionAnalyzer.autoDetectMobileHudBars(
+                bmp, Rect(0, bmp.height / 2, bmp.width, bmp.height), WebViewTarget.ACCOUNT_1
+            )
+            val botTiles = FlyffVisionAnalyzer.autoDetectActiveBuffTiles(bmp, botHud)
+            assertTrue("Expected >= 12 active buffs on top pane, got ${topTiles.size}", topTiles.size >= 12)
+            assertTrue("Expected >= 9 active buffs on bot pane, got ${botTiles.size}", botTiles.size >= 9)
+            topTiles.forEach {
+                assertTrue("Buff tile width ~35-44px, got ${it.tileBounds.width()}", it.tileBounds.width() in 30..48)
+                it.fullTileBitmap.recycle(); it.artCropBitmap.recycle(); it.timerStripBitmap.recycle()
+            }
+            botTiles.forEach {
+                it.fullTileBitmap.recycle(); it.artCropBitmap.recycle(); it.timerStripBitmap.recycle()
+            }
+            bmp.recycle()
+        }
     }
 }

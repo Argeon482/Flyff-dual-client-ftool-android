@@ -87,15 +87,19 @@ data class LiveVitalReadout(
     val fpPct: Int? = null
 )
 
+data class TaskbarPreviewCapture(
+    val owner: WebViewTarget,
+    val stripBitmap: Bitmap,
+    val stripRect: Rect,
+    val slotRects: List<Pair<Int, Rect>> // slotIndex (0..9) to full-frame tight Rect
+)
+
 data class FlyffSetupUiState(
     val stepIndex: Int = 0, // 0=Profile, 1=Keys, 2=HUD & Buffs, 3=Link Buffs, 4=Rules
     val profile: FlyffProfile = FlyffProfile(),
     val activeScanPage: Int? = null, // null = current bar, or 1..9 for F1..F9
-    val sectionMapping: Map<Int, TaskbarGroupKey> = mapOf(
-        0 to TaskbarGroupKey.MAIN_1_0,
-        1 to TaskbarGroupKey.ALT_1_0,
-        2 to TaskbarGroupKey.CTRL_1_0
-    ),
+    val activeKeyBarGroup: TaskbarGroupKey = TaskbarGroupKey.MAIN_1_0,
+    val taskbarPreviews: List<TaskbarPreviewCapture> = emptyList(),
     val pendingSlots: List<PendingSlotDraft> = emptyList(),
     val selectedHudLayout: DualLayoutMode = DualLayoutMode.SPLIT_50_50,
     val hudPreviewBitmap: Bitmap? = null,
@@ -150,13 +154,12 @@ class FlyffSetupController(
         }
     }
 
-    fun setSectionGroup(sectionIndex: Int, groupKey: TaskbarGroupKey) {
+    fun setActiveKeyBarGroup(groupKey: TaskbarGroupKey) {
         _uiState.update { state ->
-            val updatedMap = state.sectionMapping + (sectionIndex to groupKey)
             state.copy(
-                sectionMapping = updatedMap,
+                activeKeyBarGroup = groupKey,
                 pendingSlots = state.pendingSlots.map { slot ->
-                    if (slot.sectionIndex == sectionIndex) slot.copy(groupKey = groupKey) else slot
+                    slot.copy(groupKey = groupKey)
                 }
             )
         }
@@ -167,7 +170,7 @@ class FlyffSetupController(
     }
 
     /**
-     * Runs Original View bottom-taskbar auto-detection on a captured frame, auto-sorting
+     * Runs Original View 10-slot 1-0 keybar auto-detection on a captured frame, auto-sorting
      * slots into Account 1 and/or Account 2 based on DualWebActivity's live pane rects.
      */
     fun processOriginalViewCapture(
@@ -178,31 +181,41 @@ class FlyffSetupController(
         ownerOverride: WebViewTarget? = null
     ) {
         scope.launch {
-            _uiState.update { it.copy(isBusy = true, statusMessage = "Scanning Original View skill slots...", statusIsError = false) }
-            val currentMap = _uiState.value.sectionMapping
+            _uiState.update { it.copy(isBusy = true, statusMessage = "Scanning 1–0 keybar slots...", statusIsError = false) }
+            val currentGroup = _uiState.value.activeKeyBarGroup
             val currentPage = _uiState.value.activeScanPage
 
-            val scannedDrafts = withContext(Dispatchers.Default) {
+            val (scannedDrafts, previews) = withContext(Dispatchers.Default) {
                 val panesToScan = resolveVisiblePanes(frame, layoutMode, acct1Rect, acct2Rect, ownerOverride)
                 val out = mutableListOf<PendingSlotDraft>()
+                val previewList = mutableListOf<TaskbarPreviewCapture>()
                 for ((owner, paneRect) in panesToScan) {
                     val scan = FlyffVisionAnalyzer.autoDetectOriginalViewTaskbarSlots(frame, paneRect, owner)
+                    scan.previewStripBitmap?.let { stripBmp ->
+                        previewList.add(
+                            TaskbarPreviewCapture(
+                                owner = owner,
+                                stripBitmap = stripBmp,
+                                stripRect = scan.previewStripRect,
+                                slotRects = scan.detectedSlots.map { it.slotIndex to it.bounds }
+                            )
+                        )
+                    }
                     scan.detectedSlots.forEach { slot ->
-                        val group = currentMap[slot.sectionIndex] ?: TaskbarGroupKey.MAIN_1_0
                         val (_, keyNum) = ScannedSkillKey.keyCodeForSlotIndex(slot.slotIndex)
-                        val defaultCat = suggestDefaultCategory(owner, slot.sectionIndex, slot.slotIndex)
-                        val defaultLabel = if (owner == WebViewTarget.ACCOUNT_2 && slot.sectionIndex == 0 && slot.slotIndex == 0) {
+                        val defaultCat = suggestDefaultCategory(owner, currentGroup, slot.slotIndex)
+                        val defaultLabel = if (owner == WebViewTarget.ACCOUNT_2 && currentGroup == TaskbarGroupKey.MAIN_1_0 && slot.slotIndex == 0) {
                             "Heal"
                         } else {
-                            "${owner.shortLabel} Slot $keyNum"
+                            "${owner.shortLabel} Key $keyNum"
                         }
                         out.add(
                             PendingSlotDraft(
                                 owner = owner,
-                                sectionIndex = slot.sectionIndex,
+                                sectionIndex = 0,
                                 slotIndex = slot.slotIndex,
                                 barPage = currentPage,
-                                groupKey = group,
+                                groupKey = currentGroup,
                                 label = defaultLabel,
                                 category = defaultCat,
                                 include = true,
@@ -211,25 +224,28 @@ class FlyffSetupController(
                         )
                     }
                 }
-                out
+                out to previewList
             }
 
             if (!frame.isRecycled) frame.recycle()
 
             val oldPending = _uiState.value.pendingSlots
+            val oldPreviews = _uiState.value.taskbarPreviews
             _uiState.update {
                 it.copy(
                     pendingSlots = scannedDrafts,
+                    taskbarPreviews = previews,
                     isBusy = false,
                     statusMessage = if (scannedDrafts.isEmpty()) {
-                        "No occupied skill slots found. Make sure Flyff is in Original View with colored icons on the bottom bar."
+                        "No occupied 1–0 key slots found. Make sure Flyff is in Original View with skills in the 1–0 bar."
                     } else {
-                        "Auto-cropped ${scannedDrafts.size} occupied skill slot(s). Label each below and tap Save Cropped Keys."
+                        "Auto-cropped ${scannedDrafts.size} icon(s) from the ${currentGroup.shortLabel} bar. Label each below and tap Save Slots."
                     },
                     statusIsError = scannedDrafts.isEmpty()
                 )
             }
             oldPending.forEach { if (!it.iconBitmap.isRecycled) it.iconBitmap.recycle() }
+            oldPreviews.forEach { if (!it.stripBitmap.isRecycled) it.stripBitmap.recycle() }
         }
     }
 
@@ -779,6 +795,7 @@ class FlyffSetupController(
     fun dispose() {
         val s = _uiState.value
         s.pendingSlots.forEach { if (!it.iconBitmap.isRecycled) it.iconBitmap.recycle() }
+        s.taskbarPreviews.forEach { if (!it.stripBitmap.isRecycled) it.stripBitmap.recycle() }
         s.pendingBuffs.forEach {
             if (!it.fullTileBitmap.isRecycled) it.fullTileBitmap.recycle()
             if (!it.artCropBitmap.isRecycled) it.artCropBitmap.recycle()
@@ -825,15 +842,15 @@ class FlyffSetupController(
             fpPct = hud.fpBar?.let { FlyffVisionAnalyzer.measureBarFillPercent(frame, it) }
         )
 
-    private fun suggestDefaultCategory(owner: WebViewTarget, sectionIndex: Int, slotIndex: Int): SkillCategory =
+    private fun suggestDefaultCategory(owner: WebViewTarget, groupKey: TaskbarGroupKey, slotIndex: Int): SkillCategory =
         when (owner) {
             WebViewTarget.ACCOUNT_2 -> when {
-                sectionIndex == 0 && slotIndex == 0 -> SkillCategory.HEAL
+                groupKey == TaskbarGroupKey.MAIN_1_0 && slotIndex == 0 -> SkillCategory.HEAL
                 else -> SkillCategory.PARTY_BUFF
             }
             WebViewTarget.ACCOUNT_1 -> when {
-                sectionIndex == 0 && slotIndex == 9 -> SkillCategory.ATTACK_AOE
-                sectionIndex == 0 && slotIndex == 2 -> SkillCategory.MP_POT
+                groupKey == TaskbarGroupKey.MAIN_1_0 && slotIndex == 9 -> SkillCategory.ATTACK_AOE
+                groupKey == TaskbarGroupKey.MAIN_1_0 && slotIndex == 2 -> SkillCategory.MP_POT
                 else -> SkillCategory.SELF_BUFF
             }
             WebViewTarget.DEFAULT -> SkillCategory.UTILITY

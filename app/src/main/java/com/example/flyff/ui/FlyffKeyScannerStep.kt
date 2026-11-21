@@ -2,6 +2,7 @@ package com.example.flyff.ui
 
 import android.view.KeyEvent
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -13,6 +14,8 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -53,8 +56,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -89,7 +95,7 @@ fun FlyffKeyScannerStep(
     canLiveCapture: Boolean,
     onCaptureOriginalView: (ownerOverride: WebViewTarget?) -> Unit,
     onSetScanPage: (Int?) -> Unit,
-    onSetSectionGroup: (sectionIndex: Int, group: TaskbarGroupKey) -> Unit,
+    onSetKeyBarGroup: (group: TaskbarGroupKey) -> Unit,
     onUpdatePendingSlot: (String, (PendingSlotDraft) -> PendingSlotDraft) -> Unit,
     onCommitPendingSlots: () -> Unit,
     onSaveManualKey: (ScannedSkillKey) -> Unit,
@@ -123,7 +129,7 @@ fun FlyffKeyScannerStep(
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "Temporarily toggle Flyff in-game Original View so your colored bottom skill slots (1–0, Alt+1–0, Ctrl+1–0) are visible, then capture. Empty slots are skipped automatically.",
+                    text = "Toggle Flyff Original View so your 10-slot 1–0 keybar (right side of the bottom bar) is visible. Clickable shortcut slots to the left are skipped automatically; switch between 1–0, Alt+1–0, and Ctrl+1–0 in-game and match the modifier below.",
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondary
                 )
@@ -188,34 +194,26 @@ fun FlyffKeyScannerStep(
                     }
                 }
 
-                // Section 1/2/3 -> Key Bar Group mapping
-                Text("TASKBAR SECTION MAPPING", style = MaterialTheme.typography.labelSmall, color = TextDim)
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    (0..2).forEach { secIdx ->
-                        val assigned = state.sectionMapping[secIdx] ?: TaskbarGroupKey.MAIN_1_0
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = "Bar ${secIdx + 1}",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = TextSecondary,
-                                modifier = Modifier.width(44.dp)
-                            )
-                            TaskbarGroupKey.entries.forEach { group ->
-                                FilterChip(
-                                    selected = assigned == group,
-                                    onClick = { onSetSectionGroup(secIdx, group) },
-                                    label = { Text(group.shortLabel, maxLines = 1) },
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(44.dp)
-                                        .testTag("section_${secIdx}_${group.name.lowercase()}")
-                                )
-                            }
-                        }
+                // Single 10-slot Key Bar Modifier (Main 1-0 / Alt+1-0 / Ctrl+1-0 share the same 10-slot location)
+                Text("ACTIVE KEY BAR (MATCHES SMALL BAR NUMBER)", style = MaterialTheme.typography.labelSmall, color = TextDim)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    TaskbarGroupKey.entries.forEach { group ->
+                        FilterChip(
+                            selected = state.activeKeyBarGroup == group,
+                            onClick = { onSetKeyBarGroup(group) },
+                            label = { Text(group.shortLabel, maxLines = 1) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = ElectricCyan.copy(alpha = 0.20f),
+                                selectedLabelColor = ElectricCyan
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("keybar_group_${group.name.lowercase()}")
+                        )
                     }
                 }
 
@@ -260,6 +258,16 @@ fun FlyffKeyScannerStep(
                         Text("Manual Key", color = TextPrimary, maxLines = 1)
                     }
                 }
+            }
+        }
+
+        // Zoomed 10-Slot 1-0 Keybar Crop Verification Preview
+        state.taskbarPreviews.forEach { preview ->
+            if (!preview.stripBitmap.isRecycled) {
+                TaskbarStripPreviewCard(
+                    preview = preview,
+                    groupKey = state.activeKeyBarGroup
+                )
             }
         }
 
@@ -389,10 +397,11 @@ private fun PendingSlotCard(
                 Image(
                     bitmap = imgBitmap,
                     contentDescription = "Cropped skill icon for ${slot.keyBindingPreview()}",
-                    contentScale = ContentScale.Crop,
+                    contentScale = ContentScale.Fit,
                     modifier = Modifier
-                        .size(44.dp)
+                        .size(46.dp)
                         .clip(RoundedCornerShape(8.dp))
+                        .background(ObsidianBg)
                         .border(1.dp, ownerAccent, RoundedCornerShape(8.dp))
                 )
                 Column(modifier = Modifier.weight(1f)) {
@@ -405,9 +414,10 @@ private fun PendingSlotCard(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Bar ${slot.sectionIndex + 1}",
+                            text = "${slot.iconBitmap.width}×${slot.iconBitmap.height}px",
                             style = MaterialTheme.typography.labelSmall,
-                            color = TextDim
+                            color = TextDim,
+                            fontFamily = FontFamily.Monospace
                         )
                     }
                     OutlinedTextField(
@@ -714,6 +724,78 @@ private fun ManualSkillKeyDialog(
             }
         }
     )
+}
+
+@Composable
+private fun TaskbarStripPreviewCard(
+    preview: TaskbarPreviewCapture,
+    groupKey: TaskbarGroupKey
+) {
+    val imgBitmap = remember(preview.stripBitmap) { preview.stripBitmap.asImageBitmap() }
+    val stripW = preview.stripRect.width().coerceAtLeast(1).toFloat()
+    val stripH = preview.stripRect.height().coerceAtLeast(1).toFloat()
+    val aspect = (stripW / stripH).coerceIn(2.5f, 12f)
+    val accent = if (preview.owner == WebViewTarget.ACCOUNT_1) ElectricCyan else EmeraldRun
+
+    Surface(
+        color = SlateWell,
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.45f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.padding(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "${preview.owner.shortLabel} · DETECTED ${groupKey.shortLabel} KEYBAR (${preview.slotRects.size}/10)",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = accent,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Green = Exact Crop",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TextDim
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(aspect)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(ObsidianBg)
+            ) {
+                Image(
+                    bitmap = imgBitmap,
+                    contentDescription = "Captured 1-0 keybar strip for ${preview.owner.shortLabel}",
+                    contentScale = ContentScale.FillBounds,
+                    modifier = Modifier.fillMaxSize()
+                )
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    preview.slotRects.forEach { (_, slotRect) ->
+                        val l = ((slotRect.left - preview.stripRect.left) / stripW) * size.width
+                        val t = ((slotRect.top - preview.stripRect.top) / stripH) * size.height
+                        val w = (slotRect.width() / stripW) * size.width
+                        val h = (slotRect.height() / stripH) * size.height
+                        if (w > 1f && h > 1f) {
+                            drawRect(
+                                color = EmeraldRun,
+                                topLeft = Offset(l, t),
+                                size = Size(w, h),
+                                style = Stroke(width = 3f)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 private fun categoryAccent(cat: SkillCategory): Color = when (cat) {

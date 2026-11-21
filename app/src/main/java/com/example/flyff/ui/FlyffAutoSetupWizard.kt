@@ -244,7 +244,7 @@ fun FlyffAutoSetupWizard(
                         canLiveCapture = canLiveCapture,
                         onCaptureOriginalView = onCaptureOriginalView,
                         onSetScanPage = { controller.setActiveScanPage(it) },
-                        onSetSectionGroup = { sec, grp -> controller.setSectionGroup(sec, grp) },
+                        onSetKeyBarGroup = { grp -> controller.setActiveKeyBarGroup(grp) },
                         onUpdatePendingSlot = { id, fn -> controller.updatePendingSlot(id, fn) },
                         onCommitPendingSlots = { controller.commitPendingSlots() },
                         onSaveManualKey = { controller.addOrUpdateManualSkillKey(it) },

@@ -532,10 +532,11 @@ private fun PendingBuffCard(
                 Image(
                     bitmap = preview,
                     contentDescription = "Detected active buff icon",
-                    contentScale = ContentScale.Crop,
+                    contentScale = ContentScale.Fit,
                     modifier = Modifier
                         .size(46.dp)
                         .clip(RoundedCornerShape(8.dp))
+                        .background(ObsidianBg)
                         .border(1.dp, ownerAccent, RoundedCornerShape(8.dp))
                 )
                 Column(modifier = Modifier.weight(1f)) {
@@ -707,8 +708,8 @@ fun CompactTemplateIcon(
         Image(
             bitmap = loaded.asImageBitmap(),
             contentDescription = contentDescription,
-            contentScale = ContentScale.Crop,
-            modifier = modifier
+            contentScale = ContentScale.Fit,
+            modifier = modifier.background(ObsidianBg)
         )
     } else {
         Box(modifier = modifier.background(SlateElevated))
