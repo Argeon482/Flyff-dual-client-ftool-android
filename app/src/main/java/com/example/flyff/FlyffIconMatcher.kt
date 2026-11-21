@@ -114,62 +114,90 @@ object FlyffIconMatcher {
         // Extract descriptor from full tile (its topRgb/topHueGrid/topEdge automatically inspect upper 58% clean art)
         val query = extractDescriptor(fullTileBitmap)
 
-        var bestMatch: IconAutoMatch? = null
-        var bestScore = 0f
-        var secondScore = 0f
+        // Source 1 (Priority Tier 1): Direct cross-match against the user's already-scanned Step 2 Buff/Skill keys
+        var bestKeyMatch: IconAutoMatch? = null
+        var bestKeyRawScore = 0f
+        var secondKeyRawScore = 0f
 
-        // Source 1: Direct cross-match against already-scanned Step 2 Buff/Skill keys
-        for (key in savedKeys) {
+        val buffFirstKeys = savedKeys.sortedByDescending {
+            it.category == SkillCategory.PARTY_BUFF || it.category == SkillCategory.SELF_BUFF
+        }
+        for (key in buffFirstKeys) {
+            // Skip consumables/attacks when identifying active buff bar icons unless nothing else matches
+            if (key.category == SkillCategory.HP_POT ||
+                key.category == SkillCategory.MP_POT ||
+                key.category == SkillCategory.FP_POT ||
+                key.category == SkillCategory.ATTACK_AOE ||
+                key.category == SkillCategory.HEAL
+            ) continue
             val tplId = key.iconTemplateId ?: continue
             val path = templatePathById[tplId] ?: continue
             val ref = loadDescriptorForFile(path) ?: continue
-            // Small boost when matching a buff key already on the user's taskbar
             val rawScore = compareUpperArt(query, ref)
-            val bonus = if (key.category == SkillCategory.PARTY_BUFF || key.category == SkillCategory.SELF_BUFF) 0.03f else 0f
-            val score = (rawScore + bonus).coerceAtMost(1f)
-            if (score > bestScore) {
-                secondScore = bestScore
-                bestScore = score
-                bestMatch = IconAutoMatch(
+            if (rawScore > bestKeyRawScore) {
+                secondKeyRawScore = bestKeyRawScore
+                bestKeyRawScore = rawScore
+                bestKeyMatch = IconAutoMatch(
                     label = key.label,
                     recommendedCategory = key.category,
                     confidencePct = (rawScore * 100f).toInt().coerceIn(0, 100),
                     sourceTag = "Key Match",
                     matchedSkillKeyId = key.id
                 )
-            } else if (score > secondScore) {
-                secondScore = score
+            } else if (rawScore > secondKeyRawScore) {
+                secondKeyRawScore = rawScore
             }
         }
 
-        // Source 2: Cached official Flyff Universe skill icons (prioritize buff skills)
+        // Source 2 (Priority Tier 2): Official Flyff Universe API catalog — STRICTLY buff skills only!
+        // Never match non-buff attack/proc skills (e.g. Electric Counter, Electric Shock) onto active buff slots!
+        var bestApiMatch: IconAutoMatch? = null
+        var bestApiScore = 0f
+        var secondApiScore = 0f
+
         for (entry in catalogEntries) {
+            if (!entry.isBuff || entry.isHeal) continue
+            if (entry.recommendedCategory != SkillCategory.PARTY_BUFF &&
+                entry.recommendedCategory != SkillCategory.SELF_BUFF
+            ) continue
             val path = entry.cachedIconPath ?: continue
             val ref = loadDescriptorForFile(path) ?: continue
             val rawScore = compareUpperArt(query, ref)
-            val bonus = if (entry.isBuff) 0.02f else 0f
-            val score = (rawScore + bonus).coerceAtMost(1f)
-            if (score > bestScore) {
-                secondScore = bestScore
-                bestScore = score
-                bestMatch = IconAutoMatch(
+            // Mild priority boost for classic Assist/RM party buffs
+            val boost = if (entry.group == FlyffSkillGroup.ASSIST_RM) 0.02f else 0f
+            val score = (rawScore + boost).coerceAtMost(1f)
+            if (score > bestApiScore) {
+                secondApiScore = bestApiScore
+                bestApiScore = score
+                bestApiMatch = IconAutoMatch(
                     label = entry.name,
                     recommendedCategory = entry.recommendedCategory,
                     confidencePct = (rawScore * 100f).toInt().coerceIn(0, 100),
                     sourceTag = "Auto"
                 )
-            } else if (score > secondScore) {
-                secondScore = score
+            } else if (score > secondApiScore) {
+                secondApiScore = score
             }
         }
 
-        val winner = bestMatch ?: return null
-        val margin = bestScore - secondScore
-        return if (winner.confidencePct >= 66 || (winner.confidencePct >= 56 && margin >= 0.04f)) {
-            winner
-        } else {
-            null
+        // Prefer a strong Step 2 Key Match unless a buff-only API entry decisively beats it by >= 7%
+        val keyMargin = bestKeyRawScore - secondKeyRawScore
+        val keyQualified = bestKeyMatch != null && (
+            bestKeyRawScore >= 0.65f || (bestKeyRawScore >= 0.56f && keyMargin >= 0.04f)
+            )
+        if (keyQualified && (bestApiMatch == null || bestApiScore < bestKeyRawScore + 0.07f)) {
+            return bestKeyMatch
         }
+
+        val apiMargin = bestApiScore - secondApiScore
+        val apiQualified = bestApiMatch != null && (
+            bestApiMatch.confidencePct >= 66 || (bestApiMatch.confidencePct >= 57 && apiMargin >= 0.04f)
+            )
+        if (apiQualified) {
+            return bestApiMatch
+        }
+
+        return if (keyQualified) bestKeyMatch else null
     }
 
     /**

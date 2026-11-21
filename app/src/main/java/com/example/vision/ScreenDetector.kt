@@ -38,7 +38,7 @@ data class ImageMatchResult(
     val confidencePct: Int
 )
 
-class ScreenDetector(private val context: Context) {
+open class ScreenDetector(private val context: Context) {
 
     private val projectionManager =
         context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
@@ -57,7 +57,7 @@ class ScreenDetector(private val context: Context) {
     private val frameCacheLock = Any()
     private var cachedFrame: Bitmap? = null
 
-    private val _isActive = MutableStateFlow(false)
+    protected val _isActive = MutableStateFlow(false)
     val isActive: StateFlow<Boolean> = _isActive.asStateFlow()
 
     private val projectionCallback = object : MediaProjection.Callback() {
@@ -133,7 +133,7 @@ class ScreenDetector(private val context: Context) {
         }
     }
 
-    suspend fun captureLatestBitmap(): Bitmap? = withContext(Dispatchers.Default) {
+    open suspend fun captureLatestBitmap(): Bitmap? = withContext(Dispatchers.Default) {
         val reader = imageReader ?: return@withContext null
         val image = try {
             reader.acquireLatestImage()

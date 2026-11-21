@@ -1110,14 +1110,15 @@ class FlyffSetupController(
 
     private fun autoWireRulesFromSkills(profile: FlyffProfile): FlyffProfile {
         var healRule = profile.healRule
-        if (healRule.healSkillKeyId == null) {
+        if (profile.skillById(healRule.healSkillKeyId) == null) {
             val healKey = profile.skillKeys.firstOrNull { it.category == SkillCategory.HEAL }
             if (healKey != null) {
                 healRule = healRule.copy(healSkillKeyId = healKey.id)
             }
         }
 
-        val triggers = profile.vitalTriggers.toMutableList()
+        val validSkillIds = profile.skillKeys.map { it.id }.toSet()
+        val triggers = profile.vitalTriggers.filter { it.skillKeyId == null || it.skillKeyId in validSkillIds }.toMutableList()
         fun ensurePotRule(cat: SkillCategory, vital: VitalType, defaultPct: Int) {
             profile.skillKeys.filter { it.category == cat }.forEach { key ->
                 if (triggers.none { it.skillKeyId == key.id }) {

@@ -20,14 +20,23 @@ import com.example.dualweb.DualWebPreferences
 import com.example.dualweb.WebViewTextInputHelper
 import com.example.engine.ExecutionStatus
 import com.example.engine.MacroInterpreter
+import com.example.flyff.BarCalibrationSpec
 import com.example.flyff.BuffTimerOcrReader
+import com.example.flyff.FlyffCatalogEntry
 import com.example.flyff.FlyffIconMatcher
+import com.example.flyff.FlyffMacroCompiler
 import com.example.flyff.FlyffProfile
+import com.example.flyff.FlyffSkillGroup
 import com.example.flyff.FlyffVisionAnalyzer
+import com.example.flyff.HealRuleConfig
+import com.example.flyff.LayoutHudCalibration
+import com.example.flyff.RectSpec
 import com.example.flyff.ScannedSkillKey
 import com.example.flyff.SkillCategory
 import com.example.flyff.SmartFlyffEngine
 import com.example.flyff.TaskbarGroupKey
+import com.example.flyff.VitalTriggerRule
+import com.example.flyff.VitalType
 import com.example.flyff.ui.FlyffSetupController
 import com.example.model.BranchAction
 import com.example.model.CallFunctionStep
@@ -902,25 +911,46 @@ class ExampleRobolectricTest {
             bmp.recycle()
         }
 
-        // 4. Mobile UI 50/50 Split (090341: HP/MP/FP bars + Active Buff tiles)
+        // 4. Mobile UI 50/50 Split (090341: Top Fork22 HP 8402/10928 = 77% depleted!, Bottom oOXOo2 full + Active Buff tiles)
         val f341 = java.io.File(dir, "Screenshot_20261121_090341_ShizuMacro_62e243ba.jpg")
         if (f341.exists()) {
             val bmp = BitmapFactory.decodeFile(f341.absolutePath)!!
             val topHud = FlyffVisionAnalyzer.autoDetectMobileHudBars(
                 bmp, Rect(0, 0, bmp.width, bmp.height / 2), WebViewTarget.ACCOUNT_2
             )
+            val topHp = FlyffVisionAnalyzer.measureBarFillPercent(bmp, topHud.hpBar!!)
+            val topMp = FlyffVisionAnalyzer.measureBarFillPercent(bmp, topHud.mpBar!!)
+            val topFp = FlyffVisionAnalyzer.measureBarFillPercent(bmp, topHud.fpBar!!)
+            // Fork22's HP is 8402 / 10928 (~76.9%)! Must NOT falsely read 100% from dark maroon empty trough!
+            assertTrue("Real Fork22 depleted HP (8402/10928=77%) must read 68..85%, got $topHp% (rect=${topHud.hpBar!!.rect})", topHp in 68..85)
+            assertTrue("Real Fork22 full MP (9608/9608) must read >= 96%, got $topMp%", topMp >= 96)
+            assertTrue("Real Fork22 full FP (284/284) must read >= 96%, got $topFp%", topFp >= 96)
+
             val topTiles = FlyffVisionAnalyzer.autoDetectActiveBuffTiles(bmp, topHud)
             val botHud = FlyffVisionAnalyzer.autoDetectMobileHudBars(
                 bmp, Rect(0, bmp.height / 2, bmp.width, bmp.height), WebViewTarget.ACCOUNT_1
             )
+            val botHp = FlyffVisionAnalyzer.measureBarFillPercent(bmp, botHud.hpBar!!)
+            val botMp = FlyffVisionAnalyzer.measureBarFillPercent(bmp, botHud.mpBar!!)
+            val botFp = FlyffVisionAnalyzer.measureBarFillPercent(bmp, botHud.fpBar!!)
+            assertTrue("Real oOXOo2 full HP (12803/12803) must read >= 96%, got $botHp%", botHp >= 96)
+            assertTrue("Real oOXOo2 full MP (7334/7334) must read >= 96%, got $botMp%", botMp >= 96)
+            assertTrue("Real oOXOo2 full FP (278/278) must read >= 96%, got $botFp%", botFp >= 96)
+
             val botTiles = FlyffVisionAnalyzer.autoDetectActiveBuffTiles(bmp, botHud)
             assertTrue("Expected >= 12 active buffs on top pane, got ${topTiles.size}", topTiles.size >= 12)
-            assertTrue("Expected >= 9 active buffs on bot pane, got ${botTiles.size}", botTiles.size >= 9)
+            assertTrue("Expected >= 10 active buffs on bot pane, got ${botTiles.size}", botTiles.size >= 10)
             topTiles.forEach {
-                assertTrue("Buff tile width ~35-44px, got ${it.tileBounds.width()}", it.tileBounds.width() in 30..48)
+                val w = it.tileBounds.width()
+                val h = it.tileBounds.height()
+                assertTrue("Buff tile width ~32-48px, got $w", w in 28..50)
+                assertTrue("Buff tile must stay square (|w-h| <= 4), got ${w}x${h}", kotlin.math.abs(w - h) <= 4)
                 it.fullTileBitmap.recycle(); it.artCropBitmap.recycle(); it.timerStripBitmap.recycle()
             }
             botTiles.forEach {
+                val w = it.tileBounds.width()
+                val h = it.tileBounds.height()
+                assertTrue("Bot buff tile must stay square (|w-h| <= 4), got ${w}x${h}", kotlin.math.abs(w - h) <= 4)
                 it.fullTileBitmap.recycle(); it.artCropBitmap.recycle(); it.timerStripBitmap.recycle()
             }
             bmp.recycle()
@@ -1199,6 +1229,316 @@ class ExampleRobolectricTest {
         assertEquals("My RM + Psy", reloaded.name)
 
         if (!bmp.isRecycled) bmp.recycle()
+        db.close()
+    }
+
+    private fun drawFlyffVitalBar(
+        bmp: Bitmap,
+        left: Int,
+        top: Int,
+        right: Int,
+        bottom: Int,
+        fillPct: Int,
+        vitalType: VitalType
+    ) {
+        val w = right - left
+        val filledW = ((w * fillPct) / 100f).toInt().coerceIn(0, w)
+        val (bevelColor, emptyTrackColor, filledColor) = when (vitalType) {
+            VitalType.HP -> Triple(Color.rgb(120, 42, 42), Color.rgb(92, 34, 34), Color.rgb(220, 44, 48))
+            VitalType.MP -> Triple(Color.rgb(38, 66, 118), Color.rgb(30, 52, 92), Color.rgb(42, 140, 236))
+            VitalType.FP -> Triple(Color.rgb(38, 98, 48), Color.rgb(30, 78, 38), Color.rgb(52, 204, 74))
+        }
+        // Full outer tinted 1px bevel + dark-tinted depleted trough (exactly like Flyff Mobile UI!)
+        fillBitmapRect(bmp, left, top, right, bottom, bevelColor)
+        fillBitmapRect(bmp, left + 1, top + 1, right - 1, bottom - 1, emptyTrackColor)
+        if (filledW > 0) {
+            fillBitmapRect(bmp, left + 1, top + 1, (left + filledW).coerceAtMost(right - 1), bottom - 1, filledColor)
+        }
+        // White centered numeric text ("8402 / 10928") with 1px dark outline across center 28%
+        val mid = (left + right) / 2
+        val textHalf = (w * 0.14f).toInt().coerceAtLeast(8)
+        fillBitmapRect(bmp, mid - textHalf, top + 3, mid + textHalf, bottom - 3, Color.rgb(245, 245, 245))
+    }
+
+    @Test
+    fun flyffVisionAnalyzer_accuratelyMeasuresDepletedBarsWithDarkTintedTracksAndReanchorsShift() {
+        val w = 900
+        val h = 900
+        val barLeft = 112
+        val barRight = 292 // 180px wide
+
+        for (expected in listOf(100, 75, 50, 25, 0)) {
+            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            fillBitmapRect(bmp, 0, 0, w, h, Color.rgb(210, 215, 222))
+            fillBitmapRect(bmp, 12, 12, 306, 110, Color.rgb(32, 36, 44))
+            drawFlyffVitalBar(bmp, barLeft, 30, barRight, 44, expected, VitalType.HP)
+            drawFlyffVitalBar(bmp, barLeft, 52, barRight, 66, expected, VitalType.MP)
+            drawFlyffVitalBar(bmp, barLeft, 74, barRight, 88, expected, VitalType.FP)
+
+            val hpSpec = BarCalibrationSpec(VitalType.HP, RectSpec.fromPixels(barLeft, 30, barRight, 44, w, h))
+            val mpSpec = BarCalibrationSpec(VitalType.MP, RectSpec.fromPixels(barLeft, 52, barRight, 66, w, h))
+            val fpSpec = BarCalibrationSpec(VitalType.FP, RectSpec.fromPixels(barLeft, 74, barRight, 88, w, h))
+
+            val hp = FlyffVisionAnalyzer.measureBarFillPercent(bmp, hpSpec)
+            val mp = FlyffVisionAnalyzer.measureBarFillPercent(bmp, mpSpec)
+            val fp = FlyffVisionAnalyzer.measureBarFillPercent(bmp, fpSpec)
+
+            assertTrue("HP expected ~$expected%, got $hp%", kotlin.math.abs(hp - expected) <= 4)
+            assertTrue("MP expected ~$expected%, got $mp%", kotlin.math.abs(mp - expected) <= 4)
+            assertTrue("FP expected ~$expected%, got $fp%", kotlin.math.abs(fp - expected) <= 4)
+            bmp.recycle()
+        }
+
+        // Now shift the ENTIRE HUD vertically by +34px (simulating status bar / chrome shift)
+        // and verify dynamic re-anchoring still reads exact 55% HP & 30% MP!
+        val shifted = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        fillBitmapRect(shifted, 0, 0, w, h, Color.rgb(215, 222, 232)) // bright sky at old y=30..44!
+        val dy = 34
+        fillBitmapRect(shifted, 12, 12 + dy, 306, 110 + dy, Color.rgb(32, 36, 44))
+        drawFlyffVitalBar(shifted, barLeft, 30 + dy, barRight, 44 + dy, 55, VitalType.HP)
+        drawFlyffVitalBar(shifted, barLeft, 52 + dy, barRight, 66 + dy, 30, VitalType.MP)
+        drawFlyffVitalBar(shifted, barLeft, 74 + dy, barRight, 88 + dy, 100, VitalType.FP)
+
+        val oldCalHud = com.example.flyff.CharacterHudRegions(
+            owner = WebViewTarget.ACCOUNT_1,
+            paneRect = RectSpec.fromPixels(0, 0, w, h, w, h),
+            hpBar = BarCalibrationSpec(VitalType.HP, RectSpec.fromPixels(barLeft, 30, barRight, 44, w, h)),
+            mpBar = BarCalibrationSpec(VitalType.MP, RectSpec.fromPixels(barLeft, 52, barRight, 66, w, h)),
+            fpBar = BarCalibrationSpec(VitalType.FP, RectSpec.fromPixels(barLeft, 74, barRight, 88, w, h))
+        )
+        val live = FlyffVisionAnalyzer.measureHudVitalsDynamic(shifted, oldCalHud, Rect(0, 0, w, h))
+        assertTrue("Expected dynamic reanchor to trigger on +34px shift", live.reanchored)
+        assertTrue("Shifted HP (55%) should read 48..62%, got ${live.hpPct}%", (live.hpPct ?: -1) in 48..62)
+        assertTrue("Shifted MP (30%) should read 23..37%, got ${live.mpPct}%", (live.mpPct ?: -1) in 23..37)
+
+        val singleReanchoredHp = FlyffVisionAnalyzer.measureSingleBarDynamic(shifted, oldCalHud.hpBar!!)
+        assertTrue("Single-bar dynamic reanchor HP (55%) should read 48..62%, got $singleReanchoredHp%", singleReanchoredHp in 48..62)
+        shifted.recycle()
+    }
+
+    @Test
+    fun flyffVisionAnalyzer_skipsBuffPartyTabBarAndKeepsNarrowSpritesSquare() {
+        val w = 900
+        val h = 900
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        fillBitmapRect(bmp, 0, 0, w, h, Color.rgb(185, 195, 205))
+
+        // Top-left Mobile HUD (HP/MP/FP)
+        fillBitmapRect(bmp, 10, 10, 290, 104, Color.rgb(34, 38, 46))
+        drawFlyffVitalBar(bmp, 106, 26, 280, 40, 100, VitalType.HP)
+        drawFlyffVitalBar(bmp, 106, 48, 280, 62, 100, VitalType.MP)
+        drawFlyffVitalBar(bmp, 106, 70, 280, 84, 100, VitalType.FP)
+
+        // "Buff x10 | Party x2" dark tab bar sitting directly below HP/MP/FP (y=112..140)
+        // Includes a small green '+' icon on the far left — MUST BE SKIPPED!
+        fillBitmapRect(bmp, 12, 112, 286, 140, Color.rgb(36, 38, 44))
+        fillBitmapRect(bmp, 18, 118, 30, 132, Color.rgb(75, 215, 85)) // tiny green '+' icon
+        fillBitmapRect(bmp, 148, 118, 162, 132, Color.rgb(220, 175, 65)) // gold Party icon
+
+        // Actual 2-row active buff panel below the tab bar (y=146..234), 5 buffs in Row 0 + 4 buffs in Row 1
+        // Includes a narrow-artwork sprite ("Quick Step" boot at Row 0 Col 2) with dark left/right borders
+        fillBitmapRect(bmp, 12, 146, 294, 234, Color.rgb(26, 28, 34))
+        val tileSize = 36
+        val pitchX = 39
+        val pitchY = 40
+        val rowCounts = listOf(5, 4)
+        for ((rowIdx, count) in rowCounts.withIndex()) {
+            val by = 150 + rowIdx * pitchY
+            for (col in 0 until count) {
+                val bx = 16 + col * pitchX
+                fillBitmapRect(bmp, bx, by, bx + tileSize, by + tileSize, Color.rgb(34, 38, 46))
+                if (rowIdx == 0 && col == 2) {
+                    // Narrow sprite in center (e.g. Quick Step boot) with dark 8px sides
+                    fillBitmapRect(bmp, bx + 9, by + 3, bx + 27, by + 22, Color.rgb(235, 165, 55))
+                } else {
+                    fillBitmapRect(bmp, bx + 2, by + 2, bx + tileSize - 2, by + 22, Color.rgb(55 + col * 35, 135, 230 - rowIdx * 60))
+                    fillBitmapRect(bmp, bx + 6, by + 6, bx + tileSize - 6, by + 18, Color.rgb(245, 210, 65))
+                }
+                // Green MM:SS timer digits in lower third
+                fillBitmapRect(bmp, bx + 2, by + 24, bx + tileSize - 2, by + 34, Color.rgb(18, 22, 24))
+                fillBitmapRect(bmp, bx + 6, by + 26, bx + tileSize - 6, by + 32, Color.rgb(65, 245, 90))
+            }
+        }
+
+        val hud = FlyffVisionAnalyzer.autoDetectMobileHudBars(bmp, Rect(0, 0, w, h), WebViewTarget.ACCOUNT_1)
+        val buffPanel = hud.buffGridRegion.toAndroidRect(w, h)
+        assertTrue("Violet buff box MUST start below 'Buff|Party' tab bar (y >= 142), got top=${buffPanel.top}", buffPanel.top >= 142)
+
+        val tiles = FlyffVisionAnalyzer.autoDetectActiveBuffTiles(bmp, hud)
+        assertEquals(
+            "Should detect all 9 buffs (5 in Row 0 + 4 in Row 1) and skip tab bar; tiles=${tiles.map { "r${it.row}c${it.col}:${it.tileBounds}" }}",
+            9,
+            tiles.size
+        )
+        // Verify Quick Step (Row 0 Col 2) is cropped SQUARE, never narrowed!
+        val quickStep = tiles.first { it.row == 0 && it.col == 2 }
+        assertTrue(
+            "Quick Step crop must remain square (width >= 32, |w-h| <= 3), got ${quickStep.tileBounds.width()}x${quickStep.tileBounds.height()}",
+            quickStep.tileBounds.width() >= 32 && kotlin.math.abs(quickStep.tileBounds.width() - quickStep.tileBounds.height()) <= 3
+        )
+        tiles.forEach {
+            it.fullTileBitmap.recycle(); it.artCropBitmap.recycle(); it.timerStripBitmap.recycle()
+        }
+        bmp.recycle()
+    }
+
+    @Test
+    fun smartFlyffEngineAndExportedMacro_fireHealAndHpMpPotsSimultaneouslyOnDepletedBars() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        val repo = MacroRepository(context, db.macroDao())
+
+        // Build a 50/50 split frame where A2 (top) has 100% HP / 25% MP and A1 (bottom) has 50% HP / 30% MP
+        val w = 900
+        val h = 1600
+        val frame = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        fillBitmapRect(frame, 0, 0, w, h, Color.rgb(190, 200, 210))
+        // A2 top pane (y=0..800): HP 100%, MP 25%, FP 100%
+        fillBitmapRect(frame, 12, 12, 290, 108, Color.rgb(34, 38, 46))
+        drawFlyffVitalBar(frame, 104, 28, 280, 42, 100, VitalType.HP)
+        drawFlyffVitalBar(frame, 104, 50, 280, 64, 25, VitalType.MP)
+        drawFlyffVitalBar(frame, 104, 72, 280, 86, 100, VitalType.FP)
+        // A1 bottom pane (y=800..1600): HP 50%, MP 30%, FP 100%
+        fillBitmapRect(frame, 12, 812, 290, 908, Color.rgb(34, 38, 46))
+        drawFlyffVitalBar(frame, 104, 828, 280, 842, 50, VitalType.HP)
+        drawFlyffVitalBar(frame, 104, 850, 280, 864, 30, VitalType.MP)
+        drawFlyffVitalBar(frame, 104, 872, 280, 886, 100, VitalType.FP)
+
+        val testDetector = object : ScreenDetector(context) {
+            init { _isActive.value = true }
+            override suspend fun captureLatestBitmap(): Bitmap = frame.copy(Bitmap.Config.ARGB_8888, false)
+        }
+
+        val dispatched = java.util.Collections.synchronizedList(mutableListOf<Pair<WebViewTarget, Int>>())
+        val bridge = DualWebInputBridge()
+        val delegate = object : DualWebMacroDelegate {
+            override fun dispatchKey(keyCode: Int, holdMs: Long, metaState: Int, targetOverride: WebViewTarget): Boolean {
+                dispatched.add(targetOverride to keyCode)
+                return true
+            }
+            override fun dispatchTap(screenX: Float, screenY: Float, holdMs: Long, jitterPx: Int, targetOverride: WebViewTarget) = true
+            override fun dispatchSwipe(startX: Float, startY: Float, endX: Float, endY: Float, durationMs: Long, steps: Int, targetOverride: WebViewTarget) = true
+            override fun describeTarget(targetOverride: WebViewTarget) = targetOverride.shortLabel
+            override fun currentLayoutMode() = DualLayoutMode.SPLIT_50_50
+            override fun currentPaneRects() = Rect(0, 800, w, h) to Rect(0, 0, w, 800)
+        }
+        bridge.attach(delegate)
+
+        val healKey = ScannedSkillKey(id = "k-heal", owner = WebViewTarget.ACCOUNT_2, label = "Heal", category = SkillCategory.HEAL, keyCode = KeyEvent.KEYCODE_1, keyLabel = "1")
+        val a1FoodKey = ScannedSkillKey(id = "k-food", owner = WebViewTarget.ACCOUNT_1, label = "HP Food", category = SkillCategory.HP_POT, keyCode = KeyEvent.KEYCODE_1, keyLabel = "1")
+        val a1PillKey = ScannedSkillKey(id = "k-pill", owner = WebViewTarget.ACCOUNT_1, label = "HP Pill", category = SkillCategory.HP_POT, keyCode = KeyEvent.KEYCODE_2, keyLabel = "2")
+        val a1MpKey = ScannedSkillKey(id = "k-a1mp", owner = WebViewTarget.ACCOUNT_1, label = "MP Pot", category = SkillCategory.MP_POT, keyCode = KeyEvent.KEYCODE_3, keyLabel = "3")
+        val a2MpKey = ScannedSkillKey(id = "k-a2mp", owner = WebViewTarget.ACCOUNT_2, label = "RM MP Pot", category = SkillCategory.MP_POT, keyCode = KeyEvent.KEYCODE_4, keyLabel = "4")
+
+        val a1Hud = FlyffVisionAnalyzer.autoDetectMobileHudBars(frame, Rect(0, 800, w, h), WebViewTarget.ACCOUNT_1).copy(
+            hpBar = BarCalibrationSpec(VitalType.HP, RectSpec.fromPixels(104, 828, 280, 842, w, h)),
+            mpBar = BarCalibrationSpec(VitalType.MP, RectSpec.fromPixels(104, 850, 280, 864, w, h)),
+            fpBar = BarCalibrationSpec(VitalType.FP, RectSpec.fromPixels(104, 872, 280, 886, w, h))
+        )
+        val a2Hud = FlyffVisionAnalyzer.autoDetectMobileHudBars(frame, Rect(0, 0, w, 800), WebViewTarget.ACCOUNT_2).copy(
+            hpBar = BarCalibrationSpec(VitalType.HP, RectSpec.fromPixels(104, 28, 280, 42, w, h)),
+            mpBar = BarCalibrationSpec(VitalType.MP, RectSpec.fromPixels(104, 50, 280, 64, w, h)),
+            fpBar = BarCalibrationSpec(VitalType.FP, RectSpec.fromPixels(104, 72, 280, 86, w, h))
+        )
+
+        val profile = FlyffProfile(
+            name = "Test Split",
+            pollingIntervalMs = 80L,
+            skillKeys = listOf(healKey, a1FoodKey, a1PillKey, a1MpKey, a2MpKey),
+            layouts = mapOf(
+                DualLayoutMode.SPLIT_50_50 to LayoutHudCalibration(
+                    layoutMode = DualLayoutMode.SPLIT_50_50,
+                    screenWidth = w,
+                    screenHeight = h,
+                    charHuds = mapOf(WebViewTarget.ACCOUNT_1 to a1Hud, WebViewTarget.ACCOUNT_2 to a2Hud)
+                )
+            ),
+            healRule = HealRuleConfig(
+                enabled = true,
+                targetChar = WebViewTarget.ACCOUNT_1,
+                healSkillKeyId = healKey.id,
+                triggerBelowPct = 85,
+                healCadenceMs = 100L
+            ),
+            vitalTriggers = listOf(
+                VitalTriggerRule(targetChar = WebViewTarget.ACCOUNT_1, vitalType = VitalType.HP, triggerBelowPct = 65, skillKeyId = a1FoodKey.id),
+                VitalTriggerRule(targetChar = WebViewTarget.ACCOUNT_1, vitalType = VitalType.HP, triggerBelowPct = 60, skillKeyId = a1PillKey.id),
+                VitalTriggerRule(targetChar = WebViewTarget.ACCOUNT_1, vitalType = VitalType.MP, triggerBelowPct = 40, skillKeyId = a1MpKey.id),
+                VitalTriggerRule(targetChar = WebViewTarget.ACCOUNT_2, vitalType = VitalType.MP, triggerBelowPct = 40, skillKeyId = a2MpKey.id)
+            )
+        )
+
+        // 1. Verify SmartFlyffEngine fires Heal AND all 4 HP/MP pots without starvation!
+        val engine = SmartFlyffEngine(repo, testDetector, bridge, BuffTimerOcrReader())
+        engine.start(profile)
+        delay(350L)
+        engine.stop()
+
+        val fired = dispatched.toList()
+        assertTrue("SmartFlyffEngine MUST fire A2 Heal (1), fired=$fired", fired.any { it == (WebViewTarget.ACCOUNT_2 to KeyEvent.KEYCODE_1) })
+        assertTrue("SmartFlyffEngine MUST fire A1 HP Food (1), fired=$fired", fired.any { it == (WebViewTarget.ACCOUNT_1 to KeyEvent.KEYCODE_1) })
+        assertTrue("SmartFlyffEngine MUST fire A1 HP Pill (2), fired=$fired", fired.any { it == (WebViewTarget.ACCOUNT_1 to KeyEvent.KEYCODE_2) })
+        assertTrue("SmartFlyffEngine MUST fire A1 MP Pot (3), fired=$fired", fired.any { it == (WebViewTarget.ACCOUNT_1 to KeyEvent.KEYCODE_3) })
+        assertTrue("SmartFlyffEngine MUST fire A2 MP Pot (4), fired=$fired", fired.any { it == (WebViewTarget.ACCOUNT_2 to KeyEvent.KEYCODE_4) })
+
+        // 2. Verify Exported Macro (MacroInterpreter) ALSO triggers Heal + HP Food + MP Pot!
+        dispatched.clear()
+        val exported = FlyffMacroCompiler.compileToMacro(profile, DualLayoutMode.SPLIT_50_50).copy(loopCount = 1)
+        val interpreter = MacroInterpreter(repo, testDetector, OverlayCoordinator(), dualWebInputBridge = bridge)
+        interpreter.start(exported)
+        var ticks = 0
+        while (interpreter.state.value.status == ExecutionStatus.RUNNING && ticks < 60) {
+            delay(50L)
+            ticks++
+        }
+        val exportedFired = dispatched.toList()
+        assertTrue("Exported macro MUST fire A2 Heal (1), fired=$exportedFired", exportedFired.any { it == (WebViewTarget.ACCOUNT_2 to KeyEvent.KEYCODE_1) })
+        assertTrue("Exported macro MUST fire A1 HP Food (1), fired=$exportedFired", exportedFired.any { it == (WebViewTarget.ACCOUNT_1 to KeyEvent.KEYCODE_1) })
+        assertTrue("Exported macro MUST fire A1 MP Pot (3), fired=$exportedFired", exportedFired.any { it == (WebViewTarget.ACCOUNT_1 to KeyEvent.KEYCODE_3) })
+
+        bridge.detach(delegate)
+        frame.recycle()
+        db.close()
+    }
+
+    @Test
+    fun flyffIconMatcher_ignoresNonBuffApiAttackSkillsWhenIdentifyingActiveBuffs() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        val repo = MacroRepository(context, db.macroDao())
+
+        val iconBmp = Bitmap.createBitmap(36, 36, Bitmap.Config.ARGB_8888)
+        fillBitmapRect(iconBmp, 0, 0, 36, 36, Color.rgb(25, 30, 50))
+        fillBitmapRect(iconBmp, 5, 4, 31, 22, Color.rgb(75, 195, 250))
+        fillBitmapRect(iconBmp, 12, 8, 24, 18, Color.rgb(255, 235, 120))
+        val attackTpl = repo.saveTemplateBitmap("Electric Shock", iconBmp)
+        val artCrop = Bitmap.createBitmap(iconBmp, 2, 2, 32, 20)
+
+        val nonBuffEntry = FlyffCatalogEntry(
+            id = "api_999",
+            name = "Electric Shock",
+            group = FlyffSkillGroup.PSY_ELEM,
+            recommendedCategory = SkillCategory.ATTACK_AOE,
+            isBuff = false,
+            cachedIconPath = attackTpl.filePath
+        )
+
+        val res = FlyffIconMatcher.identifyActiveBuffIcon(
+            fullTileBitmap = iconBmp,
+            artCropBitmap = artCrop,
+            catalogEntries = listOf(nonBuffEntry),
+            savedKeys = emptyList(),
+            templatePathById = emptyMap()
+        )
+        assertNull("Non-buff attack skill like Electric Shock MUST NEVER be returned for active buff slots", res)
+
+        iconBmp.recycle()
+        artCrop.recycle()
+        repo.deleteTemplate(attackTpl.id)
         db.close()
     }
 }

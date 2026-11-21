@@ -268,11 +268,13 @@ class FlyffSkillCatalogManager(private val context: Context) {
         val lowerName = enName.lowercase()
         val group = mapClassToGroup(className, lowerName)
         val isHeal = lowerName.contains("heal") || lowerName == "resurrection" || lowerName == "circle healing"
-        val isBuff = !passive && (
-            durationSec >= 15 ||
-                (hasAbilities && minAttack == 0 && target in listOf("self", "party", "single", "area")) ||
+        val isBuff = !passive && !isHeal && (
+            KNOWN_BUFF_NAMES.any { lowerName.contains(it) } ||
                 categoryRaw.contains("buff") ||
-                KNOWN_BUFF_NAMES.any { lowerName.contains(it) }
+                (minAttack == 0 && (
+                    durationSec >= 15 ||
+                        (hasAbilities && target in listOf("self", "party", "single", "area"))
+                    ))
             )
 
         val recommendedCat = when {

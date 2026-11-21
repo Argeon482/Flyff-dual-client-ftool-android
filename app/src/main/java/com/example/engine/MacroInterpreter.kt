@@ -526,10 +526,14 @@ class MacroInterpreter(
                                 left = step.left,
                                 top = step.top,
                                 right = step.right,
-                                bottom = step.bottom
+                                bottom = step.bottom,
+                                normLeft = step.normLeft,
+                                normTop = step.normTop,
+                                normRight = step.normRight,
+                                normBottom = step.normBottom
                             )
                         )
-                        val pct = FlyffVisionAnalyzer.measureBarFillPercent(frame, barSpec)
+                        val pct = FlyffVisionAnalyzer.measureSingleBarDynamic(frame, barSpec)
                         frame.recycle()
                         val matched = compareValues(pct.toString(), step.comparator, step.thresholdPct.toString())
                         updateTelemetry("${vitalType.shortLabel} $pct% (${if (matched) "TRUE" else "FALSE"})")

@@ -96,6 +96,7 @@ class SmartFlyffEngine(
     private var lastBuffScanMs: Long = 0L
     private var consecutiveSafeHpTicks: Int = 0
     private var attackKeyRoundRobin: Int = 0
+    private val liveHudOverrides = ConcurrentHashMap<Pair<DualLayoutMode, WebViewTarget>, CharacterHudRegions>()
 
     fun start(profile: FlyffProfile) {
         stop()
@@ -133,6 +134,7 @@ class SmartFlyffEngine(
         lastAttackMs = 0L
         consecutiveSafeHpTicks = 0
         attackKeyRoundRobin = 0
+        liveHudOverrides.clear()
 
         _state.value = SmartFlyffRuntimeState(
             status = ExecutionStatus.RUNNING,
@@ -204,20 +206,6 @@ class SmartFlyffEngine(
                 }
 
                 val currentLayout = dualWebInputBridge.currentLayoutMode()
-                val layoutCal = profile.layouts[currentLayout]
-                if (layoutCal == null) {
-                    _state.update {
-                        it.copy(
-                            activeLayoutMode = currentLayout,
-                            layoutCalibrated = false,
-                            phase = SmartEnginePhase.UNCONFIGURED_LAYOUT,
-                            lastTelemetry = "Calibrate ${currentLayout.shortLabel} HUD to resume"
-                        )
-                    }
-                    delay(450L)
-                    continue
-                }
-
                 val frame = screenDetector.captureLatestBitmap()
                 if (frame == null) {
                     delay(profile.pollingIntervalMs.coerceIn(80L, 400L))
@@ -226,18 +214,88 @@ class SmartFlyffEngine(
 
                 try {
                     val now = System.currentTimeMillis()
+                    val (liveA1Pane, liveA2Pane) = dualWebInputBridge.currentPaneRects()
+                    val calibratedLayout = profile.layouts[currentLayout]
 
-                    // 1. Read HP / MP / FP % for every calibrated visible character (< 1ms)
-                    val a1Hud = layoutCal.charHuds[WebViewTarget.ACCOUNT_1]
-                    val a2Hud = layoutCal.charHuds[WebViewTarget.ACCOUNT_2]
+                    // Resolve each visible character's HUD (calibrated -> live re-anchored -> on-the-fly auto-detected!)
+                    fun resolveLiveHud(target: WebViewTarget, paneRect: android.graphics.Rect): CharacterHudRegions? {
+                        val visibleInLayout = when (currentLayout) {
+                            DualLayoutMode.SINGLE_ACCT_1 -> target == WebViewTarget.ACCOUNT_1
+                            DualLayoutMode.SINGLE_ACCT_2 -> target == WebViewTarget.ACCOUNT_2
+                            DualLayoutMode.SPLIT_50_50 -> true
+                        }
+                        if (!visibleInLayout) return null
 
-                    val a1Hp = a1Hud?.hpBar?.let { FlyffVisionAnalyzer.measureBarFillPercent(frame, it) }
-                    val a1Mp = a1Hud?.mpBar?.let { FlyffVisionAnalyzer.measureBarFillPercent(frame, it) }
-                    val a1Fp = a1Hud?.fpBar?.let { FlyffVisionAnalyzer.measureBarFillPercent(frame, it) }
+                        val cacheKey = currentLayout to target
+                        val existing = liveHudOverrides[cacheKey]
+                            ?: calibratedLayout?.charHuds?.get(target)
+                        if (existing != null) return existing
 
-                    val a2Hp = a2Hud?.hpBar?.let { FlyffVisionAnalyzer.measureBarFillPercent(frame, it) }
-                    val a2Mp = a2Hud?.mpBar?.let { FlyffVisionAnalyzer.measureBarFillPercent(frame, it) }
-                    val a2Fp = a2Hud?.fpBar?.let { FlyffVisionAnalyzer.measureBarFillPercent(frame, it) }
+                        // Dynamic zero-setup fallback: auto-detect HUD bars right from the live frame!
+                        val fallbackPane = if (paneRect.width() > 80 && paneRect.height() > 80) {
+                            paneRect
+                        } else {
+                            when (currentLayout) {
+                                DualLayoutMode.SINGLE_ACCT_1,
+                                DualLayoutMode.SINGLE_ACCT_2 -> android.graphics.Rect(0, 0, frame.width, frame.height)
+                                DualLayoutMode.SPLIT_50_50 -> {
+                                    val isLandscape = frame.width >= frame.height
+                                    if (target == WebViewTarget.ACCOUNT_2) {
+                                        if (isLandscape) android.graphics.Rect(0, 0, frame.width / 2, frame.height)
+                                        else android.graphics.Rect(0, 0, frame.width, frame.height / 2)
+                                    } else {
+                                        if (isLandscape) android.graphics.Rect(frame.width / 2, 0, frame.width, frame.height)
+                                        else android.graphics.Rect(0, frame.height / 2, frame.width, frame.height)
+                                    }
+                                }
+                            }
+                        }
+                        val autoDetected = FlyffVisionAnalyzer.autoDetectMobileHudBars(frame, fallbackPane, target)
+                        liveHudOverrides[cacheKey] = autoDetected
+                        return autoDetected
+                    }
+
+                    val a1BaseHud = resolveLiveHud(WebViewTarget.ACCOUNT_1, liveA1Pane)
+                    val a2BaseHud = resolveLiveHud(WebViewTarget.ACCOUNT_2, liveA2Pane)
+
+                    // 1. Dynamically read HP / MP / FP % with automatic drift re-anchoring (< 1ms fast path)
+                    val a1Measure = a1BaseHud?.let {
+                        FlyffVisionAnalyzer.measureHudVitalsDynamic(frame, it, liveA1Pane.takeIf { r -> r.width() > 80 })
+                    }
+                    if (a1Measure != null && a1Measure.reanchored) {
+                        liveHudOverrides[currentLayout to WebViewTarget.ACCOUNT_1] = a1Measure.activeHud
+                    }
+                    val a2Measure = a2BaseHud?.let {
+                        FlyffVisionAnalyzer.measureHudVitalsDynamic(frame, it, liveA2Pane.takeIf { r -> r.width() > 80 })
+                    }
+                    if (a2Measure != null && a2Measure.reanchored) {
+                        liveHudOverrides[currentLayout to WebViewTarget.ACCOUNT_2] = a2Measure.activeHud
+                    }
+
+                    val a1Hud = a1Measure?.activeHud ?: a1BaseHud
+                    val a2Hud = a2Measure?.activeHud ?: a2BaseHud
+                    val a1Hp = a1Measure?.hpPct
+                    val a1Mp = a1Measure?.mpPct
+                    val a1Fp = a1Measure?.fpPct
+                    val a2Hp = a2Measure?.hpPct
+                    val a2Mp = a2Measure?.mpPct
+                    val a2Fp = a2Measure?.fpPct
+
+                    val activeLayoutCal = calibratedLayout?.copy(
+                        charHuds = buildMap {
+                            putAll(calibratedLayout.charHuds)
+                            if (a1Hud != null) put(WebViewTarget.ACCOUNT_1, a1Hud)
+                            if (a2Hud != null) put(WebViewTarget.ACCOUNT_2, a2Hud)
+                        }
+                    ) ?: LayoutHudCalibration(
+                        layoutMode = currentLayout,
+                        screenWidth = frame.width,
+                        screenHeight = frame.height,
+                        charHuds = buildMap {
+                            if (a1Hud != null) put(WebViewTarget.ACCOUNT_1, a1Hud)
+                            if (a2Hud != null) put(WebViewTarget.ACCOUNT_2, a2Hud)
+                        }
+                    )
 
                     fun vitalPctFor(target: WebViewTarget, type: VitalType): Int? = when (target) {
                         WebViewTarget.ACCOUNT_1 -> when (type) {
@@ -256,7 +314,7 @@ class SmartFlyffEngine(
                     _state.update {
                         it.copy(
                             activeLayoutMode = currentLayout,
-                            layoutCalibrated = true,
+                            layoutCalibrated = calibratedLayout != null,
                             a1HpPct = a1Hp,
                             a1MpPct = a1Mp,
                             a1FpPct = a1Fp,
@@ -267,51 +325,46 @@ class SmartFlyffEngine(
                         )
                     }
 
-                    // 2. PRIORITY 1: HEALING ALWAYS FIRST
+                    // 2. PRIORITY 1: HEALING ALWAYS FIRST (never blocks Priority 2 emergency HP/MP/FP pots!)
+                    var healedThisTick = false
                     val healRule = profile.healRule
                     val primaryHp = vitalPctFor(healRule.targetChar, VitalType.HP)
                     if (healRule.enabled && primaryHp != null && primaryHp < healRule.triggerBelowPct) {
                         consecutiveSafeHpTicks = 0
                         val healSkill = profile.skillById(healRule.healSkillKeyId)
+                            ?: profile.skillKeys.firstOrNull { it.category == SkillCategory.HEAL }
                         if (healSkill != null) {
                             dispatchSkillKey(healSkill)
+                            healedThisTick = true
                             _state.update {
                                 it.copy(
                                     phase = SmartEnginePhase.HEALING,
                                     lastTelemetry = "HEAL ${healRule.targetChar.shortLabel} ($primaryHp% < ${healRule.triggerBelowPct}%)"
                                 )
                             }
-                            delay(healRule.healCadenceMs.coerceIn(80L, 1200L))
-                            continue
                         }
                     }
 
                     // Optional secondary heal (e.g. RM self-heal in split view)
                     val secondaryHp = vitalPctFor(healRule.secondaryTargetChar, VitalType.HP)
-                    if (healRule.secondaryEnabled && secondaryHp != null && secondaryHp < healRule.secondaryTriggerBelowPct) {
+                    if (!healedThisTick && healRule.secondaryEnabled && secondaryHp != null && secondaryHp < healRule.secondaryTriggerBelowPct) {
                         val secSkill = profile.skillById(healRule.secondaryHealSkillKeyId)
+                            ?: profile.skillKeys.firstOrNull { it.category == SkillCategory.HEAL && it.owner == healRule.secondaryTargetChar }
+                            ?: profile.skillKeys.firstOrNull { it.category == SkillCategory.HEAL }
                         if (secSkill != null) {
                             dispatchSkillKey(secSkill)
+                            healedThisTick = true
                             _state.update {
                                 it.copy(
                                     phase = SmartEnginePhase.HEALING,
                                     lastTelemetry = "SELF-HEAL ${healRule.secondaryTargetChar.shortLabel} ($secondaryHp%)"
                                 )
                             }
-                            delay(healRule.healCadenceMs.coerceIn(80L, 1200L))
-                            continue
                         }
                     }
 
-                    // Track safe HP stability window before allowing a buff cast
-                    val isPrimarySafe = !healRule.enabled || primaryHp == null || primaryHp >= healRule.safeBuffMinHpPct
-                    if (isPrimarySafe) {
-                        consecutiveSafeHpTicks = (consecutiveSafeHpTicks + 1).coerceAtMost(20)
-                    } else {
-                        consecutiveSafeHpTicks = 0
-                    }
-
                     // 3. PRIORITY 2: INSTANT HP / MP / FP POT & FOOD TRIGGERS
+                    // Always evaluated even while healing so Fighter HP food/pills & RM MP pots fire immediately!
                     var firedPot = false
                     for (rule in profile.vitalTriggers) {
                         if (!rule.enabled) continue
@@ -326,7 +379,7 @@ class SmartFlyffEngine(
                                     firedPot = true
                                     _state.update {
                                         it.copy(
-                                            phase = SmartEnginePhase.POTION,
+                                            phase = if (healedThisTick) SmartEnginePhase.HEALING else SmartEnginePhase.POTION,
                                             lastTelemetry = "${rule.targetChar.shortLabel} ${rule.vitalType.shortLabel} $currentPct% → ${skill.label}"
                                         )
                                     }
@@ -335,11 +388,26 @@ class SmartFlyffEngine(
                         }
                     }
 
+                    // If we healed this tick, immediately return to HP monitoring on heal cadence
+                    // (preempts Priority 3 Buffs & Priority 4 Combat until HP recovers!)
+                    if (healedThisTick) {
+                        delay(healRule.healCadenceMs.coerceIn(80L, 1200L))
+                        continue
+                    }
+
+                    // Track safe HP stability window before allowing a buff cast
+                    val isPrimarySafe = !healRule.enabled || primaryHp == null || primaryHp >= healRule.safeBuffMinHpPct
+                    if (isPrimarySafe) {
+                        consecutiveSafeHpTicks = (consecutiveSafeHpTicks + 1).coerceAtMost(20)
+                    } else {
+                        consecutiveSafeHpTicks = 0
+                    }
+
                     // 4. PRIORITY 3: ONE-AT-A-TIME SAFE TIMED BUFF REFRESH
                     val safeForBuff = consecutiveSafeHpTicks >= healRule.postHealStabilizeChecks.coerceAtLeast(1)
                     if (now - lastBuffScanMs >= profile.buffScanIntervalMs.coerceIn(500L, 4000L)) {
                         lastBuffScanMs = now
-                        scanActiveBuffs(frame, profile, layoutCal, currentLayout, buffStatusMap)
+                        scanActiveBuffs(frame, profile, activeLayoutCal, currentLayout, buffStatusMap)
                     }
 
                     val nextUrgentBuff = selectNextSingleBuffToCast(profile, buffStatusMap, safeForBuff, now)
@@ -365,7 +433,7 @@ class SmartFlyffEngine(
                             LogLevel.SUCCESS
                         )
                         // Interruptible cast-guard: keeps checking HP every 140ms so damage immediately preempts!
-                        interruptibleCastGuard(profile, layoutCal, link.castGuardMs.coerceIn(200L, 2500L))
+                        interruptibleCastGuard(profile, activeLayoutCal, link.castGuardMs.coerceIn(200L, 2500L))
                         continue
                     }
 
@@ -373,8 +441,8 @@ class SmartFlyffEngine(
                     val combatCfg = profile.combatConfig
                     var toggleMatched = false
                     if (combatCfg.enabled && combatCfg.useScreenToggleMatch) {
-                        val toggleTplId = layoutCal.attackToggleTemplateId
-                        val toggleRect = layoutCal.attackToggleRegion?.toAndroidRect(frame.width, frame.height)
+                        val toggleTplId = activeLayoutCal.attackToggleTemplateId
+                        val toggleRect = activeLayoutCal.attackToggleRegion?.toAndroidRect(frame.width, frame.height)
                         if (!toggleTplId.isNullOrBlank()) {
                             val tpl = repository.loadTemplateBitmap(toggleTplId)
                             if (tpl != null) {
@@ -452,7 +520,7 @@ class SmartFlyffEngine(
                                 screenToggleMatched = toggleMatched,
                                 nextBuffSummary = nextTxt,
                                 buffStatuses = buffStatusMap.toMap(),
-                                lastTelemetry = buildSafeWatchLine(currentLayout, a1Hp, a2Hp, nextTxt)
+                                lastTelemetry = buildSafeWatchLine(currentLayout, a1Hp, a1Mp, a2Hp, a2Mp, nextTxt)
                             )
                         }
                     }
@@ -493,7 +561,16 @@ class SmartFlyffEngine(
             val templateId = buffDef.templateIdForLayout(currentLayout) ?: continue
             val tpl = repository.loadTemplateBitmap(templateId) ?: continue
             try {
-                val roi = hud.buffGridRegion.toAndroidRect(frame.width, frame.height)
+                val rawRoi = hud.buffGridRegion.toAndroidRect(frame.width, frame.height)
+                // Expand search region slightly so minor vertical/horizontal UI shifts never break buff matching
+                val padX = (hud.estimatedTileWidth / 3).coerceIn(8, 24)
+                val padY = (hud.estimatedTileHeight / 2).coerceIn(12, 36)
+                val roi = android.graphics.Rect(
+                    (rawRoi.left - padX).coerceAtLeast(0),
+                    (rawRoi.top - padY).coerceAtLeast(0),
+                    (rawRoi.right + padX).coerceAtMost(frame.width),
+                    (rawRoi.bottom + padY).coerceAtMost(frame.height)
+                )
                 val match = screenDetector.matchTemplate(frame, tpl, roi, link.minConfidencePct)
                 if (!match.matched) {
                     timerOcrReader.clearCache(buffDef.id)
@@ -588,7 +665,7 @@ class SmartFlyffEngine(
                 val frame = screenDetector.captureLatestBitmap()
                 if (frame != null) {
                     val hp = try {
-                        FlyffVisionAnalyzer.measureBarFillPercent(frame, hpBar)
+                        FlyffVisionAnalyzer.measureSingleBarDynamic(frame, hpBar)
                     } finally {
                         if (!frame.isRecycled) frame.recycle()
                     }
@@ -624,12 +701,20 @@ class SmartFlyffEngine(
     private fun buildSafeWatchLine(
         layout: DualLayoutMode,
         a1Hp: Int?,
+        a1Mp: Int?,
         a2Hp: Int?,
+        a2Mp: Int?,
         nextBuff: String
     ): String = buildString {
         append(layout.shortLabel)
-        if (a1Hp != null) append(" · A1:$a1Hp%")
-        if (a2Hp != null) append(" · A2:$a2Hp%")
+        if (a1Hp != null) {
+            append(" · A1 H:$a1Hp%")
+            if (a1Mp != null) append(" M:$a1Mp%")
+        }
+        if (a2Hp != null) {
+            append(" · A2 H:$a2Hp%")
+            if (a2Mp != null) append(" M:$a2Mp%")
+        }
         if (nextBuff.isNotBlank()) append(" · $nextBuff")
     }
 

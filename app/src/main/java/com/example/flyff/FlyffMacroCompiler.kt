@@ -146,7 +146,9 @@ object FlyffMacroCompiler {
         layoutCal: LayoutHudCalibration?
     ): List<MacroStep> {
         val heal = profile.healRule
-        val healKey = profile.skillById(heal.healSkillKeyId) ?: return emptyList()
+        val healKey = profile.skillById(heal.healSkillKeyId)
+            ?: profile.skillKeys.firstOrNull { it.category == SkillCategory.HEAL }
+            ?: return emptyList()
         val hpBar = layoutCal?.charHuds?.get(heal.targetChar)?.hpBar ?: return emptyList()
 
         val steps = mutableListOf<MacroStep>()
@@ -167,6 +169,10 @@ object FlyffMacroCompiler {
                 top = hpBar.rect.top,
                 right = hpBar.rect.right,
                 bottom = hpBar.rect.bottom,
+                normLeft = hpBar.rect.normLeft,
+                normTop = hpBar.rect.normTop,
+                normRight = hpBar.rect.normRight,
+                normBottom = hpBar.rect.normBottom,
                 comparator = VarComparator.LESS_THAN,
                 thresholdPct = heal.triggerBelowPct,
                 thenAction = BranchAction.CONTINUE_NEXT,
@@ -202,6 +208,10 @@ object FlyffMacroCompiler {
                     top = hpBar.rect.top,
                     right = hpBar.rect.right,
                     bottom = hpBar.rect.bottom,
+                    normLeft = hpBar.rect.normLeft,
+                    normTop = hpBar.rect.normTop,
+                    normRight = hpBar.rect.normRight,
+                    normBottom = hpBar.rect.normBottom,
                     comparator = VarComparator.LESS_THAN,
                     thresholdPct = heal.safeBuffMinHpPct,
                     thenAction = BranchAction.CONTINUE_NEXT,
@@ -238,6 +248,10 @@ object FlyffMacroCompiler {
                     top = bar.rect.top,
                     right = bar.rect.right,
                     bottom = bar.rect.bottom,
+                    normLeft = bar.rect.normLeft,
+                    normTop = bar.rect.normTop,
+                    normRight = bar.rect.normRight,
+                    normBottom = bar.rect.normBottom,
                     comparator = VarComparator.LESS_THAN,
                     thresholdPct = rule.triggerBelowPct,
                     thenAction = BranchAction.CONTINUE_NEXT,
