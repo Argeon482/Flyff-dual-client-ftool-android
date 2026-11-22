@@ -32,8 +32,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -838,8 +840,19 @@ private fun DualWebFullscreenWorkspace(
         }
     }
 
+    val imeBottomPx = WindowInsets.ime.getBottom(LocalDensity.current)
+    val acct1TypingActive = (showQuickTypeBar && quickTypeTargetAccount == 1) ||
+        (imeBottomPx > 0 && (config.layoutMode == DualLayoutMode.SINGLE_ACCT_1 || lastTouchedAccount == 1))
+
+    LaunchedEffect(acct1TypingActive) {
+        app.dualWebInputBridge.setAccount1TypingActive(acct1TypingActive)
+    }
+
     DisposableEffect(Unit) {
-        onDispose { activeWizardController?.dispose() }
+        onDispose {
+            app.dualWebInputBridge.setAccount1TypingActive(false)
+            activeWizardController?.dispose()
+        }
     }
 
     LaunchedEffect(showQuickTypeBar) {

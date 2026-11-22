@@ -2410,6 +2410,223 @@ object FlyffVisionAnalyzer {
         )
     }
 
+    /**
+     * Detects whether Flyff Mobile's Chat window or top keyboard-typing bar is currently open inside
+     * the given character pane (supports both Single Full-Screen and 50/50 Split views):
+     * 1. Top full-width pitch-black keyboard input box (shown when soft keyboard is active in Flyff)
+     * 2. Bottom/lower-pane dark charcoal chat input bar paired horizontally with the lime-green "Send" pill
+     * 3. Top-right orange "X" close circle paired with the left-edge yellow "General" chat channel tab
+     */
+    fun detectFlyffChatOpenInPane(frame: Bitmap, paneRect: Rect): Boolean {
+        val safe = clampRect(paneRect, frame.width, frame.height)
+        val w = safe.width()
+        val h = safe.height()
+        if (w < 120 || h < 120) return false
+
+        // 1. Pitch-black full-width keyboard typing strip near the top of the pane
+        val blackTop = safe.top + (w * 0.006f).toInt()
+        val blackBot = min(safe.bottom - 2, safe.top + (w * 0.080f).toInt())
+        val blackLeft = safe.left + (w * 0.10f).toInt()
+        val blackRight = safe.left + (w * 0.90f).toInt()
+        val xStepBlack = max(4, (blackRight - blackLeft) / 48)
+        var pureBlackRows = 0
+        var y = blackTop
+        while (y < blackBot) {
+            var hits = 0
+            var total = 0
+            var x = blackLeft
+            while (x < blackRight) {
+                val p = frame.getPixel(x, y)
+                val r = (p shr 16) and 0xFF
+                val g = (p shr 8) and 0xFF
+                val b = p and 0xFF
+                if (r <= 14 && g <= 14 && b <= 14) hits++
+                total++
+                x += xStepBlack
+            }
+            if (total > 0 && hits.toFloat() / total.toFloat() >= 0.90f) {
+                pureBlackRows++
+            }
+            y += 2
+        }
+        if (pureBlackRows >= 8) return true
+
+        // 2. Dark uniform chat input bar (16%..84% W) paired with lime-green "Send" button (90%..97.5% W)
+        val sendScanTop = safe.top + (h * 0.68f).toInt()
+        val sendScanBot = safe.bottom - 2
+        val inputL = safe.left + (w * 0.16f).toInt()
+        val inputR = safe.left + (w * 0.84f).toInt()
+        val inputStep = max(4, (inputR - inputL) / 36)
+        val sendL = safe.left + (w * 0.90f).toInt()
+        val sendR = safe.left + (w * 0.975f).toInt()
+        val sendStep = max(2, (sendR - sendL) / 14)
+        var matchedChatBarRows = 0
+        y = sendScanTop
+        while (y < sendScanBot) {
+            var greenHits = 0
+            var greenTotal = 0
+            var sx = sendL
+            while (sx < sendR) {
+                val p = frame.getPixel(sx, y)
+                val r = (p shr 16) and 0xFF
+                val g = (p shr 8) and 0xFF
+                val b = p and 0xFF
+                // Lime-green Flyff "Send" pill (~ RGB 130, 175, 55)
+                if (g >= 115 && g - b >= 35 && g - r >= 10) greenHits++
+                greenTotal++
+                sx += sendStep
+            }
+            if (greenTotal > 0 && greenHits.toFloat() / greenTotal.toFloat() >= 0.55f) {
+                var darkHits = 0
+                var darkTotal = 0
+                var ix = inputL
+                while (ix < inputR) {
+                    val p = frame.getPixel(ix, y)
+                    val r = (p shr 16) and 0xFF
+                    val g = (p shr 8) and 0xFF
+                    val b = p and 0xFF
+                    val maxC = max(r, max(g, b))
+                    val minC = min(r, min(g, b))
+                    if (maxC in 18..105 && (maxC - minC) <= 28) darkHits++
+                    darkTotal++
+                    ix += inputStep
+                }
+                if (darkTotal > 0 && darkHits.toFloat() / darkTotal.toFloat() >= 0.78f) {
+                    matchedChatBarRows++
+                    if (matchedChatBarRows >= 4) return true
+                }
+            }
+            y += 3
+        }
+
+        // 3. Backup pair: top-right orange 'X' close circle + left-edge bright yellow "General" chat tab
+        val closeL = safe.left + (w * 0.960f).toInt()
+        val closeR = min(safe.right, safe.left + (w * 0.996f).toInt())
+        val closeT = safe.top + (w * 0.005f).toInt()
+        val closeB = min(safe.bottom, safe.top + (w * 0.042f).toInt())
+        var orangePx = 0
+        var closeTotal = 0
+        var cy = closeT
+        while (cy < closeB) {
+            var cx = closeL
+            while (cx < closeR) {
+                val p = frame.getPixel(cx, cy)
+                val r = (p shr 16) and 0xFF
+                val g = (p shr 8) and 0xFF
+                val b = p and 0xFF
+                if (r >= 170 && g in 50..155 && b <= 75 && (r - b) >= 105) orangePx++
+                closeTotal++
+                cx += 3
+            }
+            cy += 3
+        }
+        val hasCloseX = closeTotal > 0 && orangePx.toFloat() / closeTotal.toFloat() >= 0.28f
+        if (!hasCloseX) return false
+
+        val genL = safe.left + (w * 0.015f).toInt()
+        val genR = safe.left + (w * 0.082f).toInt()
+        val genT = safe.top + (w * 0.040f).toInt()
+        val genB = min(safe.bottom, safe.top + (w * 0.082f).toInt())
+        var yellowPx = 0
+        var genTotal = 0
+        var gy = genT
+        while (gy < genB) {
+            var gx = genL
+            while (gx < genR) {
+                val p = frame.getPixel(gx, gy)
+                val r = (p shr 16) and 0xFF
+                val g = (p shr 8) and 0xFF
+                val b = p and 0xFF
+                if (r >= 175 && g >= 145 && b <= 100 && (r - b) >= 85 && (g - b) >= 55) yellowPx++
+                genTotal++
+                gx += 3
+            }
+            gy += 3
+        }
+        val hasGeneralTab = genTotal > 0 && yellowPx.toFloat() / genTotal.toFloat() >= 0.25f
+        return hasGeneralTab
+    }
+
+    /**
+     * Detects Flyff Mobile's centered "Resurrection" death modal inside a character pane
+     * (works in both Single Full-Screen and 50/50 Split views) by identifying its stack of
+     * 3–4 golden-yellow horizontal buttons ("Lodestar", "Lodelight", "Flyff Shop", "Current Location")
+     * separated by cream parchment gaps beneath the dark-brown "Resurrection" title banner.
+     */
+    fun detectFlyffResurrectionDialog(frame: Bitmap, paneRect: Rect): Boolean {
+        val safe = clampRect(paneRect, frame.width, frame.height)
+        val w = safe.width()
+        val h = safe.height()
+        if (w < 140 || h < 140) return false
+
+        val btnLeft = safe.left + (w * 0.435f).toInt()
+        val btnRight = safe.left + (w * 0.565f).toInt()
+        val xStep = max(3, (btnRight - btnLeft) / 28)
+        val scanTop = safe.top + (w * 0.055f).toInt()
+        val scanBot = min(safe.bottom - 2, safe.top + (w * 0.265f).toInt())
+        if (scanBot <= scanTop + 24) return false
+
+        val rowStep = 2
+        val sampleCount = ((scanBot - scanTop) / rowStep).coerceAtLeast(1)
+        val isGoldRow = BooleanArray(sampleCount)
+        val isParchmentRow = BooleanArray(sampleCount)
+
+        for (i in 0 until sampleCount) {
+            val y = scanTop + i * rowStep
+            var goldHits = 0
+            var creamHits = 0
+            var total = 0
+            var x = btnLeft
+            while (x < btnRight) {
+                val p = frame.getPixel(x, y)
+                val r = (p shr 16) and 0xFF
+                val g = (p shr 8) and 0xFF
+                val b = p and 0xFF
+                val isGold = r >= 185 && g >= 140 && b <= 110 && (r - b) >= 85 && (g - b) >= 45
+                val isCream = !isGold && r >= 195 && g >= 180 && b >= 145 && (r - b) <= 68
+                if (isGold) goldHits++
+                if (isCream) creamHits++
+                total++
+                x += xStep
+            }
+            if (total > 0) {
+                isGoldRow[i] = goldHits.toFloat() / total.toFloat() >= 0.52f
+                isParchmentRow[i] = creamHits.toFloat() / total.toFloat() >= 0.50f
+            }
+        }
+
+        // Extract distinct golden-yellow button bands
+        val goldBands = mutableListOf<IntRange>()
+        var idx = 0
+        while (idx < sampleCount) {
+            if (isGoldRow[idx]) {
+                val start = idx
+                while (idx < sampleCount && isGoldRow[idx]) idx++
+                val end = idx - 1
+                val bandPx = (end - start + 1) * rowStep
+                if (bandPx >= 6) {
+                    goldBands.add(start..end)
+                }
+            } else {
+                idx++
+            }
+        }
+        if (goldBands.size < 3) return false
+
+        // Verify consecutive bands are separated by narrow cream parchment gaps (like the 4 stacked buttons)
+        var validGaps = 0
+        for (b in 0 until goldBands.size - 1) {
+            val gapStart = goldBands[b].last + 1
+            val gapEnd = goldBands[b + 1].first - 1
+            val gapPx = (gapEnd - gapStart + 1) * rowStep
+            if (gapPx in 2..36) {
+                val hasCream = (gapStart..gapEnd).any { it in 0 until sampleCount && isParchmentRow[it] }
+                if (hasCream) validGaps++
+            }
+        }
+        return validGaps >= 2
+    }
+
     fun safeCrop(src: Bitmap, rect: Rect): Bitmap? {
         val safe = clampRect(rect, src.width, src.height)
         val w = safe.width()

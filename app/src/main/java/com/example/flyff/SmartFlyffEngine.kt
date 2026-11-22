@@ -26,8 +26,11 @@ enum class SmartEnginePhase(val label: String) {
     IDLE("Idle"),
     HEALING("Priority Heal"),
     POTION("Vital Pot"),
+    BUFF_SWEEP("Initial Buffs"),
     BUFFING("Safe Buff"),
     COMBAT("Combat"),
+    CHAT_PAUSED("Chat · RM Active"),
+    DEAD_PAUSED("Dead · Paused"),
     SAFE_WATCH("Watching"),
     UNCONFIGURED_LAYOUT("Calibrate View")
 }
@@ -100,6 +103,7 @@ class SmartFlyffEngine(
     private val consecutiveMissingScans = ConcurrentHashMap<String, Int>()
     private val consecutiveLowTimerScans = ConcurrentHashMap<String, Int>()
     private val lastHealthyTimerMs = ConcurrentHashMap<String, Long>()
+    private val initialSweepAttemptCount = ConcurrentHashMap<String, Int>()
     private var lastPrimaryHealMs: Long = 0L
     private var lastSecondaryHealMs: Long = 0L
     private var buffCastGuardUntilMs: Long = 0L
@@ -107,6 +111,24 @@ class SmartFlyffEngine(
     private var consecutiveSafeHpTicks: Int = 0
     private var attackKeyRoundRobin: Int = 0
     private val liveHudOverrides = ConcurrentHashMap<Pair<DualLayoutMode, WebViewTarget>, CharacterHudRegions>()
+
+    @Volatile
+    private var initialBuffSweepActive: Boolean = false
+
+    @Volatile
+    private var initialSweepScanCompleted: Boolean = false
+
+    @Volatile
+    private var buffReplacementPausedUntilMs: Long = 0L
+
+    @Volatile
+    private var mainCharDead: Boolean = false
+
+    @Volatile
+    private var a1ChatPaused: Boolean = false
+
+    private var consecutiveZeroHpTicks: Int = 0
+    private var consecutiveAliveHpTicks: Int = 0
 
     fun start(profile: FlyffProfile) {
         stop()
@@ -145,6 +167,7 @@ class SmartFlyffEngine(
         consecutiveMissingScans.clear()
         consecutiveLowTimerScans.clear()
         lastHealthyTimerMs.clear()
+        initialSweepAttemptCount.clear()
         timerOcrReader.clearCache()
         lastPrimaryHealMs = 0L
         lastSecondaryHealMs = 0L
@@ -153,15 +176,26 @@ class SmartFlyffEngine(
         consecutiveSafeHpTicks = 0
         attackKeyRoundRobin = 0
         liveHudOverrides.clear()
+        initialBuffSweepActive = effectiveProfile.buffLinks.any { it.enabled }
+        initialSweepScanCompleted = false
+        buffReplacementPausedUntilMs = 0L
+        mainCharDead = false
+        a1ChatPaused = false
+        consecutiveZeroHpTicks = 0
+        consecutiveAliveHpTicks = 0
 
         _state.value = SmartFlyffRuntimeState(
             status = ExecutionStatus.RUNNING,
             activeProfileId = effectiveProfile.id,
             activeProfileName = effectiveProfile.name,
             activeLayoutMode = dualWebInputBridge.currentLayoutMode(),
-            phase = SmartEnginePhase.SAFE_WATCH,
+            phase = if (initialBuffSweepActive) SmartEnginePhase.BUFF_SWEEP else SmartEnginePhase.SAFE_WATCH,
             manualCombatEnabled = manualCombatOverride,
-            lastTelemetry = "Smart Flyff running (${effectiveProfile.name})"
+            lastTelemetry = if (initialBuffSweepActive) {
+                "Scanning active buffs (${effectiveProfile.name})..."
+            } else {
+                "Smart Flyff running (${effectiveProfile.name})"
+            }
         )
 
         runJob = scope.launch {
@@ -207,6 +241,11 @@ class SmartFlyffEngine(
         buffScanJob = null
         activeProfile = null
         latestLayoutSnapshot = null
+        initialBuffSweepActive = false
+        initialSweepScanCompleted = false
+        buffReplacementPausedUntilMs = 0L
+        mainCharDead = false
+        a1ChatPaused = false
         _state.update {
             it.copy(
                 status = ExecutionStatus.IDLE,
@@ -244,6 +283,34 @@ class SmartFlyffEngine(
                     val (liveA1Pane, liveA2Pane) = dualWebInputBridge.currentPaneRects()
                     val calibratedLayout = profile.layouts[currentLayout]
 
+                    fun resolvePaneRect(target: WebViewTarget, livePane: android.graphics.Rect): android.graphics.Rect {
+                        if (livePane.width() > 80 && livePane.height() > 80) return livePane
+                        return when (currentLayout) {
+                            DualLayoutMode.SINGLE_ACCT_1,
+                            DualLayoutMode.SINGLE_ACCT_2 -> android.graphics.Rect(0, 0, frame.width, frame.height)
+                            DualLayoutMode.SPLIT_50_50 -> {
+                                val isLandscape = frame.width >= frame.height
+                                if (target == WebViewTarget.ACCOUNT_2) {
+                                    if (isLandscape) android.graphics.Rect(0, 0, frame.width / 2, frame.height)
+                                    else android.graphics.Rect(0, 0, frame.width, frame.height / 2)
+                                } else {
+                                    if (isLandscape) android.graphics.Rect(frame.width / 2, 0, frame.width, frame.height)
+                                    else android.graphics.Rect(0, frame.height / 2, frame.width, frame.height)
+                                }
+                            }
+                        }
+                    }
+
+                    val a1EffectivePane = resolvePaneRect(WebViewTarget.ACCOUNT_1, liveA1Pane)
+                    val a2EffectivePane = resolvePaneRect(WebViewTarget.ACCOUNT_2, liveA2Pane)
+
+                    // Detect Account 1 chat/typing (via Android IME / Quick Type OR visual Flyff Chat overlay)
+                    // When open, stop sending keys ONLY to Char 1 (Account 1) while RM (Account 2) continues!
+                    val a1VisibleInLayout = currentLayout != DualLayoutMode.SINGLE_ACCT_2
+                    val visualChatA1 = a1VisibleInLayout &&
+                        FlyffVisionAnalyzer.detectFlyffChatOpenInPane(frame, a1EffectivePane)
+                    a1ChatPaused = dualWebInputBridge.isAccount1TypingActive() || visualChatA1
+
                     // Resolve each visible character's HUD (calibrated -> live re-anchored -> on-the-fly auto-detected!)
                     fun resolveLiveHud(target: WebViewTarget, paneRect: android.graphics.Rect): CharacterHudRegions? {
                         val visibleInLayout = when (currentLayout) {
@@ -258,36 +325,28 @@ class SmartFlyffEngine(
                             ?: calibratedLayout?.charHuds?.get(target)
                         if (existing != null) return existing
 
-                        // Dynamic zero-setup fallback: auto-detect HUD bars right from the live frame!
-                        val fallbackPane = if (paneRect.width() > 80 && paneRect.height() > 80) {
-                            paneRect
-                        } else {
-                            when (currentLayout) {
-                                DualLayoutMode.SINGLE_ACCT_1,
-                                DualLayoutMode.SINGLE_ACCT_2 -> android.graphics.Rect(0, 0, frame.width, frame.height)
-                                DualLayoutMode.SPLIT_50_50 -> {
-                                    val isLandscape = frame.width >= frame.height
-                                    if (target == WebViewTarget.ACCOUNT_2) {
-                                        if (isLandscape) android.graphics.Rect(0, 0, frame.width / 2, frame.height)
-                                        else android.graphics.Rect(0, 0, frame.width, frame.height / 2)
-                                    } else {
-                                        if (isLandscape) android.graphics.Rect(frame.width / 2, 0, frame.width, frame.height)
-                                        else android.graphics.Rect(0, frame.height / 2, frame.width, frame.height)
-                                    }
-                                }
-                            }
-                        }
-                        val autoDetected = FlyffVisionAnalyzer.autoDetectMobileHudBars(frame, fallbackPane, target)
+                        val autoDetected = FlyffVisionAnalyzer.autoDetectMobileHudBars(frame, paneRect, target)
                         liveHudOverrides[cacheKey] = autoDetected
                         return autoDetected
                     }
 
-                    val a1BaseHud = resolveLiveHud(WebViewTarget.ACCOUNT_1, liveA1Pane)
-                    val a2BaseHud = resolveLiveHud(WebViewTarget.ACCOUNT_2, liveA2Pane)
+                    val a1BaseHud = resolveLiveHud(WebViewTarget.ACCOUNT_1, a1EffectivePane)
+                    val a2BaseHud = resolveLiveHud(WebViewTarget.ACCOUNT_2, a2EffectivePane)
 
                     // 1. Dynamically read HP / MP / FP % with automatic drift re-anchoring (< 1ms fast path)
-                    val a1Measure = a1BaseHud?.let {
-                        FlyffVisionAnalyzer.measureHudVitalsDynamic(frame, it, liveA1Pane.takeIf { r -> r.width() > 80 })
+                    // Skip dynamic re-anchor on A1 while A1 chat overlay is dimming/covering A1's bars
+                    val a1Measure = a1BaseHud?.let { hud ->
+                        if (a1ChatPaused) {
+                            FlyffVisionAnalyzer.LiveHudVitalsMeasurement(
+                                hpPct = hud.hpBar?.let { FlyffVisionAnalyzer.measureBarFillPercent(frame, it) },
+                                mpPct = hud.mpBar?.let { FlyffVisionAnalyzer.measureBarFillPercent(frame, it) },
+                                fpPct = hud.fpBar?.let { FlyffVisionAnalyzer.measureBarFillPercent(frame, it) },
+                                activeHud = hud,
+                                reanchored = false
+                            )
+                        } else {
+                            FlyffVisionAnalyzer.measureHudVitalsDynamic(frame, hud, liveA1Pane.takeIf { r -> r.width() > 80 })
+                        }
                     }
                     if (a1Measure != null && a1Measure.reanchored) {
                         liveHudOverrides[currentLayout to WebViewTarget.ACCOUNT_1] = a1Measure.activeHud
@@ -353,19 +412,106 @@ class SmartFlyffEngine(
                         )
                     }
 
+                    // 1b. DEATH & REVIVE DETECTION (Main Char)
+                    // When dead: STOP ALL KEYS immediately (both Fighter & RM).
+                    // When revived: trigger a complete initial buff sweep just like pressing Play!
+                    val mainTarget = profile.healRule.targetChar
+                    val mainPaneForDeath = if (mainTarget == WebViewTarget.ACCOUNT_1) a1EffectivePane else a2EffectivePane
+                    val mainVisible = (mainTarget == WebViewTarget.ACCOUNT_1 && a1Hud != null) ||
+                        (mainTarget == WebViewTarget.ACCOUNT_2 && a2Hud != null)
+                    val mainPausedForChat = mainTarget == WebViewTarget.ACCOUNT_1 && a1ChatPaused
+                    val resDialogVisible = mainVisible && !mainPausedForChat &&
+                        FlyffVisionAnalyzer.detectFlyffResurrectionDialog(frame, mainPaneForDeath)
+                    val mainHp = vitalPctFor(mainTarget, VitalType.HP)
+                    val mainMp = vitalPctFor(mainTarget, VitalType.MP)
+                    val mainFp = vitalPctFor(mainTarget, VitalType.FP)
+                    val anchoredZeroHp = mainVisible && !mainPausedForChat &&
+                        mainHp == 0 && ((mainMp ?: 0) >= 5 || (mainFp ?: 0) >= 5)
+
+                    if (!mainCharDead) {
+                        if (anchoredZeroHp) {
+                            consecutiveZeroHpTicks++
+                        } else {
+                            consecutiveZeroHpTicks = 0
+                        }
+                        if (resDialogVisible || consecutiveZeroHpTicks >= 4) {
+                            mainCharDead = true
+                            consecutiveAliveHpTicks = 0
+                            consecutiveSafeHpTicks = 0
+                            _state.update {
+                                it.copy(
+                                    phase = SmartEnginePhase.DEAD_PAUSED,
+                                    lastTelemetry = "DEAD — All keys stopped (waiting for revive)"
+                                )
+                            }
+                            repository.appendLog(
+                                profile.id,
+                                profile.name,
+                                "Death Pause",
+                                "Main character died — stopped all keys until revived",
+                                LogLevel.WARN
+                            )
+                        }
+                    } else {
+                        val revivedSignal = !resDialogVisible && mainHp != null && mainHp >= 15
+                        if (revivedSignal) {
+                            consecutiveAliveHpTicks++
+                        } else {
+                            consecutiveAliveHpTicks = 0
+                        }
+                        if (consecutiveAliveHpTicks >= 2) {
+                            mainCharDead = false
+                            consecutiveZeroHpTicks = 0
+                            consecutiveAliveHpTicks = 0
+                            resetBuffStateForFullSweep(profile)
+                            _state.update {
+                                it.copy(
+                                    phase = if (initialBuffSweepActive) SmartEnginePhase.BUFF_SWEEP else SmartEnginePhase.SAFE_WATCH,
+                                    lastTelemetry = if (initialBuffSweepActive) {
+                                        "REVIVED — Casting all missing buffs..."
+                                    } else {
+                                        "REVIVED — Resuming macro"
+                                    }
+                                )
+                            }
+                            repository.appendLog(
+                                profile.id,
+                                profile.name,
+                                "Revive Rebuff",
+                                "Character revived — triggered full active-buff refresh sweep",
+                                LogLevel.SUCCESS
+                            )
+                        }
+                    }
+
+                    if (mainCharDead) {
+                        _state.update {
+                            it.copy(
+                                phase = SmartEnginePhase.DEAD_PAUSED,
+                                lastTelemetry = "DEAD — All keys stopped (waiting for revive)"
+                            )
+                        }
+                        delay(profile.pollingIntervalMs.coerceIn(35L, 250L))
+                        continue
+                    }
+
                     // 2. PRIORITY 1: IMMEDIATE HEALING (zero post-press blocking wait!)
                     var healedThisTick = false
                     val healRule = profile.healRule
                     val effectiveHealCadenceMs = healRule.healCadenceMs.coerceIn(30L, 1200L)
                     val primaryHp = vitalPctFor(healRule.targetChar, VitalType.HP)
-                    val primaryNeedsHeal = healRule.enabled && primaryHp != null && primaryHp < healRule.triggerBelowPct
+                    // Avoid false-healing at 0% if A1's HP bar is covered/dimmed by A1's own Chat overlay;
+                    // if A1 HP is genuinely low and readable while chatting, RM still heals!
+                    val primaryNeedsHeal = healRule.enabled &&
+                        primaryHp != null &&
+                        primaryHp < healRule.triggerBelowPct &&
+                        !(a1ChatPaused && healRule.targetChar == WebViewTarget.ACCOUNT_1 && primaryHp == 0)
                     if (primaryNeedsHeal) {
                         consecutiveSafeHpTicks = 0
                         if (now - lastPrimaryHealMs >= effectiveHealCadenceMs) {
                             val healSkill = profile.skillById(healRule.healSkillKeyId)
                                 ?: profile.skillKeys.firstOrNull { it.category == SkillCategory.HEAL }
-                            if (healSkill != null) {
-                                dispatchSkillKey(healSkill)
+                            if (healSkill != null && dispatchSkillKey(healSkill)) {
                                 lastPrimaryHealMs = now
                                 healedThisTick = true
                                 _state.update {
@@ -385,8 +531,7 @@ class SmartFlyffEngine(
                         val secSkill = profile.skillById(healRule.secondaryHealSkillKeyId)
                             ?: profile.skillKeys.firstOrNull { it.category == SkillCategory.HEAL && it.owner == healRule.secondaryTargetChar }
                             ?: profile.skillKeys.firstOrNull { it.category == SkillCategory.HEAL }
-                        if (secSkill != null) {
-                            dispatchSkillKey(secSkill)
+                        if (secSkill != null && dispatchSkillKey(secSkill)) {
                             lastSecondaryHealMs = now
                             healedThisTick = true
                             _state.update {
@@ -400,16 +545,17 @@ class SmartFlyffEngine(
 
                     // 3. PRIORITY 2: INSTANT HP / MP / FP POT & FOOD TRIGGERS
                     // Always evaluated immediately on the exact same tick (never starved by Heal!)
+                    // Skips Account 1 pots while Char 1 is chatting; RM (Account 2) pots continue normally!
                     var firedPot = false
                     for (rule in profile.vitalTriggers) {
                         if (!rule.enabled) continue
+                        val skill = profile.skillById(rule.skillKeyId) ?: continue
+                        if (a1ChatPaused && skill.owner == WebViewTarget.ACCOUNT_1) continue
                         val currentPct = vitalPctFor(rule.targetChar, rule.vitalType) ?: continue
                         if (currentPct < rule.triggerBelowPct) {
                             val lastFired = lastVitalTriggerMs[rule.id] ?: 0L
                             if (now - lastFired >= rule.cooldownMs.coerceAtLeast(100L)) {
-                                val skill = profile.skillById(rule.skillKeyId)
-                                if (skill != null) {
-                                    dispatchSkillKey(skill)
+                                if (dispatchSkillKey(skill)) {
                                     lastVitalTriggerMs[rule.id] = now
                                     firedPot = true
                                     _state.update {
@@ -424,52 +570,124 @@ class SmartFlyffEngine(
                     }
 
                     // Track safe HP stability window before allowing a buff cast
-                    val isPrimarySafe = !healRule.enabled || primaryHp == null || primaryHp >= healRule.safeBuffMinHpPct
+                    val isPrimarySafe = !healRule.enabled ||
+                        primaryHp == null ||
+                        (a1ChatPaused && healRule.targetChar == WebViewTarget.ACCOUNT_1) ||
+                        primaryHp >= healRule.safeBuffMinHpPct
                     if (isPrimarySafe) {
                         consecutiveSafeHpTicks = (consecutiveSafeHpTicks + 1).coerceAtMost(20)
                     } else {
                         consecutiveSafeHpTicks = 0
                     }
 
-                    // 4. PRIORITY 3: ONE-AT-A-TIME SAFE TIMED BUFF REFRESH
-                    // Reads liveBuffStatuses produced asynchronously by buffScanJob — ZERO blocking on HP/Attacks!
-                    // Enforces profile.minBuffRecastSec (default 8 min) so buffs are never spam-recast.
+                    // 4. PRIORITY 3: STARTUP / REVIVE FULL BUFF SWEEP -> 8-MIN WAIT -> TIMED REPLACEMENT
                     val safeForBuff = !primaryNeedsHeal &&
                         !secondaryNeedsHeal &&
                         consecutiveSafeHpTicks >= healRule.postHealStabilizeChecks.coerceAtLeast(1)
                     var castBuffThisTick = false
-                    if (safeForBuff && now >= buffCastGuardUntilMs) {
+
+                    if (initialBuffSweepActive && initialSweepScanCompleted) {
+                        val scannableLinks = profile.buffLinks.filter { link ->
+                            if (!link.enabled) return@filter false
+                            val def = profile.buffById(link.activeBuffId) ?: return@filter false
+                            val hud = activeLayoutCal.charHuds[def.targetChar] ?: return@filter false
+                            hud.buffGridRegion.isValid &&
+                                def.templateIdForLayout(currentLayout) != null &&
+                                profile.skillById(link.skillKeyId) != null
+                        }
+                        val mainScannableLinks = scannableLinks.filter { link ->
+                            profile.buffById(link.activeBuffId)?.targetChar == mainTarget
+                        }
+                        val sweepTargetLinks = mainScannableLinks.ifEmpty { scannableLinks }
+
+                        if (sweepTargetLinks.isEmpty()) {
+                            completeInitialBuffSweep(profile, now, castCount = 0)
+                        } else {
+                            val nextSweepBuff = selectNextInitialSweepBuff(
+                                profile = profile,
+                                scannableLinks = scannableLinks,
+                                mainTarget = mainTarget,
+                                statuses = liveBuffStatuses,
+                                safeForBuff = safeForBuff,
+                                nowMs = now
+                            )
+                            if (nextSweepBuff != null && now >= buffCastGuardUntilMs) {
+                                val (link, status, skill) = nextSweepBuff
+                                if (dispatchSkillKey(skill)) {
+                                    lastBuffCastMs[link.id] = now
+                                    initialSweepAttemptCount[link.id] = (initialSweepAttemptCount[link.id] ?: 0) + 1
+                                    consecutiveMissingScans[link.id] = 0
+                                    consecutiveLowTimerScans[link.id] = 0
+                                    timerOcrReader.clearCache(link.activeBuffId)
+                                    buffCastGuardUntilMs = now + link.castGuardMs.coerceIn(120L, 1200L)
+                                    castBuffThisTick = true
+                                    val doneCount = sweepTargetLinks.count { l ->
+                                        liveBuffStatuses[l.id]?.detected == true || (initialSweepAttemptCount[l.id] ?: 0) >= 1
+                                    }
+                                    _state.update {
+                                        it.copy(
+                                            phase = SmartEnginePhase.BUFF_SWEEP,
+                                            nextBuffSummary = "Init ${skill.label} ($doneCount/${sweepTargetLinks.size})",
+                                            buffStatuses = liveBuffStatuses.toMap(),
+                                            lastTelemetry = "INIT BUFF ${skill.label} ($doneCount/${sweepTargetLinks.size})"
+                                        )
+                                    }
+                                    repository.appendLog(
+                                        profile.id,
+                                        profile.name,
+                                        "Initial Buff Sweep",
+                                        "Cast missing buff ${skill.label} (${skill.shortBadge()}) — $doneCount/${sweepTargetLinks.size}",
+                                        LogLevel.SUCCESS
+                                    )
+                                }
+                            } else {
+                                // Check if all main-char buffs are now confirmed active OR all missing buffs
+                                // have completed their sweep attempts (wait until every buff is active or retried)
+                                val allConfirmedUp = sweepTargetLinks.all { l ->
+                                    liveBuffStatuses[l.id]?.detected == true
+                                }
+                                val allAttemptedAndSettled = sweepTargetLinks.all { l ->
+                                    liveBuffStatuses[l.id]?.detected == true ||
+                                        (initialSweepAttemptCount[l.id] ?: 0) >= MAX_INITIAL_SWEEP_ATTEMPTS
+                                }
+                                if (allConfirmedUp || allAttemptedAndSettled) {
+                                    val totalCasts = initialSweepAttemptCount.values.sum()
+                                    completeInitialBuffSweep(profile, now, castCount = totalCasts)
+                                }
+                            }
+                        }
+                    } else if (!initialBuffSweepActive && now >= buffReplacementPausedUntilMs && safeForBuff && now >= buffCastGuardUntilMs) {
                         val nextUrgentBuff = selectNextSingleBuffToCast(profile, liveBuffStatuses, safeForBuff = true, nowMs = now)
                         if (nextUrgentBuff != null) {
                             val (link, status, skill) = nextUrgentBuff
-                            dispatchSkillKey(skill)
-                            lastBuffCastMs[link.id] = now
-                            consecutiveMissingScans[link.id] = 0
-                            consecutiveLowTimerScans[link.id] = 0
-                            timerOcrReader.clearCache(link.activeBuffId)
-                            buffCastGuardUntilMs = now + link.castGuardMs.coerceIn(60L, 1500L)
-                            castBuffThisTick = true
-                            // Optimistically mark buff refreshed so we don't re-pick it before next background scan
-                            liveBuffStatuses[link.id] = status.copy(
-                                detected = true,
-                                needsRefresh = false
-                            )
-                            val timerLabel = if (!status.detected) "MISSING" else BuffTimerOcrReader.formatSecondsShort(status.remainingSeconds)
-                            _state.update {
-                                it.copy(
-                                    phase = SmartEnginePhase.BUFFING,
-                                    nextBuffSummary = "${skill.label} ($timerLabel)",
-                                    buffStatuses = liveBuffStatuses.toMap(),
-                                    lastTelemetry = "BUFF ${skill.label} [$timerLabel] (${skill.shortBadge()})"
+                            if (dispatchSkillKey(skill)) {
+                                lastBuffCastMs[link.id] = now
+                                consecutiveMissingScans[link.id] = 0
+                                consecutiveLowTimerScans[link.id] = 0
+                                timerOcrReader.clearCache(link.activeBuffId)
+                                buffCastGuardUntilMs = now + link.castGuardMs.coerceIn(60L, 1500L)
+                                castBuffThisTick = true
+                                liveBuffStatuses[link.id] = status.copy(
+                                    detected = true,
+                                    needsRefresh = false
+                                )
+                                val timerLabel = if (!status.detected) "MISSING" else BuffTimerOcrReader.formatSecondsShort(status.remainingSeconds)
+                                _state.update {
+                                    it.copy(
+                                        phase = SmartEnginePhase.BUFFING,
+                                        nextBuffSummary = "${skill.label} ($timerLabel)",
+                                        buffStatuses = liveBuffStatuses.toMap(),
+                                        lastTelemetry = "BUFF ${skill.label} [$timerLabel] (${skill.shortBadge()})"
+                                    )
+                                }
+                                repository.appendLog(
+                                    profile.id,
+                                    profile.name,
+                                    "Buff Refresh",
+                                    "Cast ${skill.label} (${skill.shortBadge()}) — state: $timerLabel (min recast ${profile.minBuffRecastSec / 60}m)",
+                                    LogLevel.SUCCESS
                                 )
                             }
-                            repository.appendLog(
-                                profile.id,
-                                profile.name,
-                                "Buff Refresh",
-                                "Cast ${skill.label} (${skill.shortBadge()}) — state: $timerLabel (min recast ${profile.minBuffRecastSec / 60}m)",
-                                LogLevel.SUCCESS
-                            )
                         }
                     }
 
@@ -494,19 +712,22 @@ class SmartFlyffEngine(
                         }
                     }
 
-                    val combatActive = combatCfg.enabled && (manualCombatOverride || toggleMatched)
+                    val effectiveAttackKeyIds = combatCfg.attackSkillKeyIds.ifEmpty {
+                        profile.skillKeys.filter { it.category == SkillCategory.ATTACK_AOE }.map { it.id }
+                    }
+                    val combatActive = manualCombatOverride || (combatCfg.enabled && toggleMatched)
                     var actedInCombat = false
-                    if (combatCfg.enabled) {
+                    if (combatCfg.enabled || manualCombatOverride) {
                         // Timed cooldown skills
                         for (cd in combatCfg.cooldownSkills) {
                             if (!cd.enabled) continue
                             if (cd.onlyWhenCombatActive && !combatActive) continue
                             if (cd.onlyWhenSafeHp && !safeForBuff) continue
+                            val skill = profile.skillById(cd.skillKeyId) ?: continue
+                            if (a1ChatPaused && skill.owner == WebViewTarget.ACCOUNT_1) continue
                             val lastUsed = lastCooldownSkillMs[cd.id] ?: 0L
                             if (now - lastUsed >= cd.cooldownMs.coerceAtLeast(300L)) {
-                                val skill = profile.skillById(cd.skillKeyId)
-                                if (skill != null) {
-                                    dispatchSkillKey(skill)
+                                if (dispatchSkillKey(skill)) {
                                     lastCooldownSkillMs[cd.id] = now
                                     actedInCombat = true
                                     _state.update {
@@ -523,23 +744,24 @@ class SmartFlyffEngine(
 
                         // Primary attack / AoE keys — fast multi-hit-per-second cadence (min 35ms, default 80ms)
                         // Runs independently of RM healing (A1 can attack while A2 heals!)
-                        if (!actedInCombat && combatActive && combatCfg.attackSkillKeyIds.isNotEmpty() &&
+                        if (!actedInCombat && combatActive && effectiveAttackKeyIds.isNotEmpty() &&
                             now - lastAttackMs >= combatCfg.attackIntervalMs.coerceAtLeast(35L)
                         ) {
-                            val keyId = combatCfg.attackSkillKeyIds[attackKeyRoundRobin % combatCfg.attackSkillKeyIds.size]
+                            val keyId = effectiveAttackKeyIds[attackKeyRoundRobin % effectiveAttackKeyIds.size]
                             attackKeyRoundRobin++
                             val atkSkill = profile.skillById(keyId)
-                            if (atkSkill != null) {
-                                dispatchSkillKey(atkSkill)
-                                lastAttackMs = now
-                                actedInCombat = true
-                                if (!healedThisTick && !firedPot && !castBuffThisTick) {
-                                    _state.update {
-                                        it.copy(
-                                            phase = SmartEnginePhase.COMBAT,
-                                            screenToggleMatched = toggleMatched,
-                                            lastTelemetry = "ATK ${atkSkill.label} (${atkSkill.shortBadge()})"
-                                        )
+                            if (atkSkill != null && !(a1ChatPaused && atkSkill.owner == WebViewTarget.ACCOUNT_1)) {
+                                if (dispatchSkillKey(atkSkill)) {
+                                    lastAttackMs = now
+                                    actedInCombat = true
+                                    if (!healedThisTick && !firedPot && !castBuffThisTick) {
+                                        _state.update {
+                                            it.copy(
+                                                phase = SmartEnginePhase.COMBAT,
+                                                screenToggleMatched = toggleMatched,
+                                                lastTelemetry = "ATK ${atkSkill.label} (${atkSkill.shortBadge()})"
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -547,19 +769,36 @@ class SmartFlyffEngine(
                     }
 
                     if (!healedThisTick && !firedPot && !castBuffThisTick && !actedInCombat) {
-                        val soonest = liveBuffStatuses.values
-                            .filter { it.remainingSeconds != null && it.remainingSeconds > 0 }
-                            .minByOrNull { it.remainingSeconds ?: Int.MAX_VALUE }
-                        val nextTxt = soonest?.let {
-                            "${it.buffName} ${BuffTimerOcrReader.formatSecondsShort(it.remainingSeconds)}"
-                        } ?: ""
+                        val waitRemainingSec = ((buffReplacementPausedUntilMs - now) / 1000L).coerceAtLeast(0L).toInt()
+                        val nextTxt = when {
+                            initialBuffSweepActive -> "Initial buff check"
+                            waitRemainingSec > 0 -> "Buffs OK (${BuffTimerOcrReader.formatSecondsShort(waitRemainingSec)})"
+                            else -> {
+                                val soonest = liveBuffStatuses.values
+                                    .filter { it.remainingSeconds != null && it.remainingSeconds > 0 }
+                                    .minByOrNull { it.remainingSeconds ?: Int.MAX_VALUE }
+                                soonest?.let {
+                                    "${it.buffName} ${BuffTimerOcrReader.formatSecondsShort(it.remainingSeconds)}"
+                                } ?: ""
+                            }
+                        }
+                        val idlePhase = when {
+                            a1ChatPaused -> SmartEnginePhase.CHAT_PAUSED
+                            initialBuffSweepActive -> SmartEnginePhase.BUFF_SWEEP
+                            else -> SmartEnginePhase.SAFE_WATCH
+                        }
+                        val idleLine = if (a1ChatPaused) {
+                            "A1 Chat paused (RM active)"
+                        } else {
+                            buildSafeWatchLine(currentLayout, a1Hp, a1Mp, a2Hp, a2Mp, nextTxt)
+                        }
                         _state.update {
                             it.copy(
-                                phase = SmartEnginePhase.SAFE_WATCH,
+                                phase = idlePhase,
                                 screenToggleMatched = toggleMatched,
                                 nextBuffSummary = nextTxt,
                                 buffStatuses = liveBuffStatuses.toMap(),
-                                lastTelemetry = buildSafeWatchLine(currentLayout, a1Hp, a1Mp, a2Hp, a2Mp, nextTxt)
+                                lastTelemetry = idleLine
                             )
                         }
                     }
@@ -585,6 +824,34 @@ class SmartFlyffEngine(
         }
     }
 
+    private suspend fun resetBuffStateForFullSweep(profile: FlyffProfile) {
+        lastBuffCastMs.clear()
+        liveBuffStatuses.clear()
+        consecutiveMissingScans.clear()
+        consecutiveLowTimerScans.clear()
+        lastHealthyTimerMs.clear()
+        initialSweepAttemptCount.clear()
+        timerOcrReader.clearCache()
+        buffCastGuardUntilMs = 0L
+        buffReplacementPausedUntilMs = 0L
+        initialSweepScanCompleted = false
+        initialBuffSweepActive = profile.buffLinks.any { it.enabled }
+    }
+
+    private suspend fun completeInitialBuffSweep(profile: FlyffProfile, nowMs: Long, castCount: Int) {
+        val waitMs = effectiveMinBuffRecastMs(profile)
+        initialBuffSweepActive = false
+        buffReplacementPausedUntilMs = nowMs + waitMs
+        val waitMins = (waitMs / 60_000L).coerceAtLeast(1L)
+        repository.appendLog(
+            profile.id,
+            profile.name,
+            "Buff Sweep Done",
+            "All active buffs ready ($castCount cast) — waiting ${waitMins}m before replacement cycle",
+            LogLevel.INFO
+        )
+    }
+
     /**
      * Background buff icon + timer OCR scanner running on its own coroutine so scanning 15–20
      * buffs never delays HP polling, emergency healing, pots, or rapid attacks.
@@ -595,21 +862,40 @@ class SmartFlyffEngine(
                 val profile = activeProfile ?: break
                 if (!dualWebInputBridge.isRoutingActive() || !screenDetector.isActive.value) break
 
+                val now = System.currentTimeMillis()
+                if (mainCharDead) {
+                    delay(250L)
+                    continue
+                }
+                // During the post-sweep 8-minute wait, avoid unnecessary template/OCR churn
+                if (!initialBuffSweepActive && now < buffReplacementPausedUntilMs) {
+                    delay(500L)
+                    continue
+                }
+
                 val snapshot = latestLayoutSnapshot
                 if (snapshot == null) {
-                    delay(60L)
+                    delay(50L)
                     continue
                 }
                 val (currentLayout, layoutCal) = snapshot
                 val frame = screenDetector.captureLatestBitmap()
                 if (frame != null) {
                     try {
-                        scanActiveBuffs(frame, profile, layoutCal, currentLayout)
+                        scanActiveBuffs(frame, profile, layoutCal, currentLayout, isInitialSweep = initialBuffSweepActive)
+                        if (initialBuffSweepActive) {
+                            initialSweepScanCompleted = true
+                        }
                     } finally {
                         if (!frame.isRecycled) frame.recycle()
                     }
                 }
-                delay(profile.buffScanIntervalMs.coerceIn(600L, 5000L))
+                val scanDelay = if (initialBuffSweepActive) {
+                    300L
+                } else {
+                    profile.buffScanIntervalMs.coerceIn(600L, 5000L)
+                }
+                delay(scanDelay)
             }
         } catch (_: CancellationException) {
             // Normal stop
@@ -622,7 +908,8 @@ class SmartFlyffEngine(
         frame: Bitmap,
         profile: FlyffProfile,
         layoutCal: LayoutHudCalibration,
-        currentLayout: DualLayoutMode
+        currentLayout: DualLayoutMode,
+        isInitialSweep: Boolean
     ) {
         val now = System.currentTimeMillis()
         val minRecastMs = effectiveMinBuffRecastMs(profile)
@@ -631,31 +918,34 @@ class SmartFlyffEngine(
             if (!scope.isActive) return
             if (!link.enabled) continue
             val buffDef = profile.buffById(link.activeBuffId) ?: continue
+            // If A1's chat overlay is covering A1's buff grid, skip scanning A1's buffs until chat closes
+            if (a1ChatPaused && buffDef.targetChar == WebViewTarget.ACCOUNT_1) continue
             val hud = layoutCal.charHuds[buffDef.targetChar] ?: continue
             if (!hud.buffGridRegion.isValid) continue
 
-            // Skip OCR work entirely for buffs that are still deep inside their minimum recast cooldown
-            val lastCast = lastBuffCastMs[link.id] ?: 0L
-            if (lastCast > 0L && now - lastCast < minRecastMs) {
-                val existing = liveBuffStatuses[link.id]
-                if (existing == null || existing.needsRefresh) {
-                    liveBuffStatuses[link.id] = BuffRuntimeStatus(
-                        linkId = link.id,
-                        buffName = buffDef.label,
-                        targetChar = buffDef.targetChar,
-                        detected = true,
-                        remainingSeconds = existing?.remainingSeconds,
-                        needsRefresh = false
-                    )
+            // Outside initial sweep, skip OCR work for buffs deep inside their 8-min recast lockout
+            if (!isInitialSweep) {
+                val lastCast = lastBuffCastMs[link.id] ?: 0L
+                if (lastCast > 0L && now - lastCast < minRecastMs) {
+                    val existing = liveBuffStatuses[link.id]
+                    if (existing == null || existing.needsRefresh) {
+                        liveBuffStatuses[link.id] = BuffRuntimeStatus(
+                            linkId = link.id,
+                            buffName = buffDef.label,
+                            targetChar = buffDef.targetChar,
+                            detected = true,
+                            remainingSeconds = existing?.remainingSeconds,
+                            needsRefresh = false
+                        )
+                    }
+                    continue
                 }
-                continue
             }
 
             val templateId = buffDef.templateIdForLayout(currentLayout) ?: continue
             val tpl = repository.loadTemplateBitmap(templateId) ?: continue
             try {
                 val rawRoi = hud.buffGridRegion.toAndroidRect(frame.width, frame.height)
-                // Expand search region slightly so minor vertical/horizontal UI shifts never break buff matching
                 val padX = (hud.estimatedTileWidth / 3).coerceIn(8, 24)
                 val padY = (hud.estimatedTileHeight / 2).coerceIn(12, 36)
                 val roi = android.graphics.Rect(
@@ -670,8 +960,9 @@ class SmartFlyffEngine(
                     val misses = (consecutiveMissingScans[link.id] ?: 0) + 1
                     consecutiveMissingScans[link.id] = misses
                     consecutiveLowTimerScans[link.id] = 0
-                    // Require 2 consecutive misses before declaring missing (prevents 1-frame sparkle/scroll flicker!)
-                    val confirmedMissing = misses >= 2
+                    // During initial startup/revive sweep, detect missing buffs immediately (1 scan);
+                    // during ongoing play, require 2 consecutive misses to reject 1-frame sparkle flicker
+                    val confirmedMissing = if (isInitialSweep) misses >= 1 else misses >= 2
                     liveBuffStatuses[link.id] = BuffRuntimeStatus(
                         linkId = link.id,
                         buffName = buffDef.label,
@@ -682,47 +973,57 @@ class SmartFlyffEngine(
                     )
                 } else {
                     consecutiveMissingScans[link.id] = 0
-                    val strip = FlyffVisionAnalyzer.cropTimerStripFromMatch(
-                        frame = frame,
-                        matchCenterX = match.centerX,
-                        matchCenterY = match.centerY,
-                        artWidth = tpl.width,
-                        artHeight = tpl.height,
-                        fullTileHeightHint = hud.estimatedTileHeight
-                    )
-                    val reading = if (strip != null) {
-                        try {
-                            timerOcrReader.readTimerFromStrip(strip, cacheKey = buffDef.id)
-                        } finally {
-                            if (!strip.isRecycled) strip.recycle()
+                    if (isInitialSweep) {
+                        // During initial sweep, presence alone confirms the buff is already active!
+                        liveBuffStatuses[link.id] = BuffRuntimeStatus(
+                            linkId = link.id,
+                            buffName = buffDef.label,
+                            targetChar = buffDef.targetChar,
+                            detected = true,
+                            remainingSeconds = liveBuffStatuses[link.id]?.remainingSeconds,
+                            needsRefresh = false
+                        )
+                    } else {
+                        val strip = FlyffVisionAnalyzer.cropTimerStripFromMatch(
+                            frame = frame,
+                            matchCenterX = match.centerX,
+                            matchCenterY = match.centerY,
+                            artWidth = tpl.width,
+                            artHeight = tpl.height,
+                            fullTileHeightHint = hud.estimatedTileHeight
+                        )
+                        val reading = if (strip != null) {
+                            try {
+                                timerOcrReader.readTimerFromStrip(strip, cacheKey = buffDef.id)
+                            } finally {
+                                if (!strip.isRecycled) strip.recycle()
+                            }
+                        } else {
+                            BuffTimerReading("", null)
                         }
-                    } else {
-                        BuffTimerReading("", null)
+                        val secs = reading.remainingSeconds
+                        if (secs != null && secs >= 180) {
+                            lastHealthyTimerMs[link.id] = now
+                        }
+                        val rawLow = secs != null && secs <= link.refreshBelowSec
+                        val needsRefresh = if (rawLow) {
+                            val lowCount = (consecutiveLowTimerScans[link.id] ?: 0) + 1
+                            consecutiveLowTimerScans[link.id] = lowCount
+                            val recentlyHealthy = (now - (lastHealthyTimerMs[link.id] ?: 0L)) < 90_000L
+                            if (recentlyHealthy) lowCount >= 2 else true
+                        } else {
+                            consecutiveLowTimerScans[link.id] = 0
+                            false
+                        }
+                        liveBuffStatuses[link.id] = BuffRuntimeStatus(
+                            linkId = link.id,
+                            buffName = buffDef.label,
+                            targetChar = buffDef.targetChar,
+                            detected = true,
+                            remainingSeconds = secs,
+                            needsRefresh = needsRefresh
+                        )
                     }
-                    val secs = reading.remainingSeconds
-                    if (secs != null && secs >= 180) {
-                        lastHealthyTimerMs[link.id] = now
-                    }
-                    val rawLow = secs != null && secs <= link.refreshBelowSec
-                    val needsRefresh = if (rawLow) {
-                        val lowCount = (consecutiveLowTimerScans[link.id] ?: 0) + 1
-                        consecutiveLowTimerScans[link.id] = lowCount
-                        // If we saw a >= 3 min timer within the last 90s, require 2 consecutive low reads
-                        // to reject single-frame OCR misreads like "0:18" instead of "20:18"
-                        val recentlyHealthy = (now - (lastHealthyTimerMs[link.id] ?: 0L)) < 90_000L
-                        if (recentlyHealthy) lowCount >= 2 else true
-                    } else {
-                        consecutiveLowTimerScans[link.id] = 0
-                        false
-                    }
-                    liveBuffStatuses[link.id] = BuffRuntimeStatus(
-                        linkId = link.id,
-                        buffName = buffDef.label,
-                        targetChar = buffDef.targetChar,
-                        detected = true,
-                        remainingSeconds = secs,
-                        needsRefresh = needsRefresh
-                    )
                 }
             } finally {
                 if (!tpl.isRecycled) tpl.recycle()
@@ -733,6 +1034,38 @@ class SmartFlyffEngine(
     private fun effectiveMinBuffRecastMs(profile: FlyffProfile): Long {
         val configuredMs = profile.minBuffRecastSec.coerceIn(0, 3600) * 1000L
         return configuredMs.coerceAtLeast(MIN_BUFF_DEBOUNCE_FLOOR_MS)
+    }
+
+    private fun selectNextInitialSweepBuff(
+        profile: FlyffProfile,
+        scannableLinks: List<BuffKeyLink>,
+        mainTarget: WebViewTarget,
+        statuses: Map<String, BuffRuntimeStatus>,
+        safeForBuff: Boolean,
+        nowMs: Long
+    ): Triple<BuffKeyLink, BuffRuntimeStatus, ScannedSkillKey>? {
+        val candidates = mutableListOf<Triple<BuffKeyLink, BuffRuntimeStatus, ScannedSkillKey>>()
+        for (link in scannableLinks) {
+            if (link.requiresSafeHp && !safeForBuff) continue
+            val status = statuses[link.id] ?: continue
+            if (status.detected) continue
+            val attempts = initialSweepAttemptCount[link.id] ?: 0
+            if (attempts >= MAX_INITIAL_SWEEP_ATTEMPTS) continue
+            val lastCast = lastBuffCastMs[link.id] ?: 0L
+            if (lastCast > 0L && nowMs - lastCast < INITIAL_SWEEP_RETRY_DELAY_MS) continue
+            val skill = profile.skillById(link.skillKeyId) ?: continue
+            if (a1ChatPaused && skill.owner == WebViewTarget.ACCOUNT_1) continue
+            candidates.add(Triple(link, status, skill))
+        }
+        if (candidates.isEmpty()) return null
+        // Main char buffs first, then unattempted before retries, then link priority
+        return candidates.sortedWith(
+            compareBy<Triple<BuffKeyLink, BuffRuntimeStatus, ScannedSkillKey>>(
+                { profile.buffById(it.first.activeBuffId)?.targetChar != mainTarget },
+                { initialSweepAttemptCount[it.first.id] ?: 0 },
+                { it.first.priority }
+            )
+        ).first()
     }
 
     private fun selectNextSingleBuffToCast(
@@ -752,6 +1085,7 @@ class SmartFlyffEngine(
             val status = statuses[link.id] ?: continue
             if (!status.needsRefresh) continue
             val skill = profile.skillById(link.skillKeyId) ?: continue
+            if (a1ChatPaused && skill.owner == WebViewTarget.ACCOUNT_1) continue
             candidates.add(Triple(link, status, skill))
         }
         if (candidates.isEmpty()) return null
@@ -766,7 +1100,9 @@ class SmartFlyffEngine(
         ).first()
     }
 
-    private suspend fun dispatchSkillKey(skill: ScannedSkillKey) {
+    private suspend fun dispatchSkillKey(skill: ScannedSkillKey): Boolean {
+        if (mainCharDead) return false
+        if (a1ChatPaused && skill.owner == WebViewTarget.ACCOUNT_1) return false
         val page = skill.barPage
         if (page != null && page in 1..9 && lastPageByAccount[skill.owner] != page) {
             dualWebInputBridge.dispatchKey(
@@ -778,7 +1114,7 @@ class SmartFlyffEngine(
             lastPageByAccount[skill.owner] = page
             delay(25L)
         }
-        dualWebInputBridge.dispatchKey(
+        return dualWebInputBridge.dispatchKey(
             keyCode = skill.keyCode,
             holdMs = 30L,
             metaState = skill.metaState,
@@ -809,5 +1145,7 @@ class SmartFlyffEngine(
     companion object {
         // Hard anti-double-cast floor even if user sets minBuffRecastSec to 0
         private const val MIN_BUFF_DEBOUNCE_FLOOR_MS = 4500L
+        private const val INITIAL_SWEEP_RETRY_DELAY_MS = 2500L
+        private const val MAX_INITIAL_SWEEP_ATTEMPTS = 2
     }
 }

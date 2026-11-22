@@ -322,6 +322,11 @@ open class ScreenDetector(private val context: Context) {
         step: Int
     ): Double {
         var totalDiff = 0L
+        var sumS = 0.0
+        var sumT = 0.0
+        var sumS2 = 0.0
+        var sumT2 = 0.0
+        var sumST = 0.0
         var samples = 0L
         var ty = 0
         while (ty < tplH) {
@@ -331,10 +336,24 @@ open class ScreenDetector(private val context: Context) {
             while (tx < tplW) {
                 val sp = screenPixels[sRow + startX + tx]
                 val tp = tplPixels[tRow + tx]
-                val dr = abs(((sp shr 16) and 0xFF) - ((tp shr 16) and 0xFF))
-                val dg = abs(((sp shr 8) and 0xFF) - ((tp shr 8) and 0xFF))
-                val db = abs((sp and 0xFF) - (tp and 0xFF))
+                val sr = (sp shr 16) and 0xFF
+                val sg = (sp shr 8) and 0xFF
+                val sb = sp and 0xFF
+                val tr = (tp shr 16) and 0xFF
+                val tg = (tp shr 8) and 0xFF
+                val tb = tp and 0xFF
+                val dr = abs(sr - tr)
+                val dg = abs(sg - tg)
+                val db = abs(sb - tb)
                 totalDiff += (dr + dg + db)
+
+                val sl = (sr * 299 + sg * 587 + sb * 114) * 0.001
+                val tl = (tr * 299 + tg * 587 + tb * 114) * 0.001
+                sumS += sl
+                sumT += tl
+                sumS2 += sl * sl
+                sumT2 += tl * tl
+                sumST += sl * tl
                 samples++
                 tx += step
             }
@@ -342,7 +361,26 @@ open class ScreenDetector(private val context: Context) {
         }
         if (samples == 0L) return 0.0
         val avgDiff = totalDiff.toDouble() / (samples * 3.0 * 255.0)
-        return (1.0 - avgDiff).coerceIn(0.0, 1.0)
+        val l1Score = (1.0 - avgDiff).coerceIn(0.0, 1.0)
+
+        // When the template contains real visual structure (not a solid-color swatch), enforce
+        // luminance Normalized Cross-Correlation so flat backgrounds or unrelated icons cannot
+        // falsely score ~75% via average L1 color distance alone.
+        val n = samples.toDouble()
+        val meanT = sumT / n
+        val varT = (sumT2 / n) - (meanT * meanT)
+        if (varT < 100.0) {
+            return l1Score
+        }
+        val meanS = sumS / n
+        val varS = (sumS2 / n) - (meanS * meanS)
+        val ncc = if (varS < 16.0) {
+            0.0
+        } else {
+            val cov = (sumST / n) - (meanS * meanT)
+            (cov / kotlin.math.sqrt(varS * varT)).coerceIn(0.0, 1.0)
+        }
+        return (l1Score * 0.58 + ncc * 0.42).coerceIn(0.0, 1.0)
     }
 
     companion object {

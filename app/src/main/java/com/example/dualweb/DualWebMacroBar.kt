@@ -145,12 +145,17 @@ fun FloatingSelectedMacroBar(
         )
 
     if (collapsed) {
+        val atkActive = smartState.manualCombatEnabled || smartState.screenToggleMatched
         Surface(
             color = SlateSurface.copy(alpha = 0.92f),
             shape = RoundedCornerShape(16.dp),
             border = BorderStroke(
                 width = 1.5.dp,
-                color = if (isRunning) EmeraldRun else ElectricCyan.copy(alpha = 0.65f)
+                color = when {
+                    smartState.phase == SmartEnginePhase.DEAD_PAUSED -> RoseAlert
+                    isRunning -> EmeraldRun
+                    else -> ElectricCyan.copy(alpha = 0.65f)
+                }
             ),
             shadowElevation = 8.dp,
             modifier = modifier
@@ -164,45 +169,32 @@ fun FloatingSelectedMacroBar(
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier.padding(start = 10.dp, end = 4.dp, top = 2.dp, bottom = 2.dp)
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                Box(
+                    contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .height(48.dp)
+                        .size(width = 36.dp, height = 48.dp)
+                        .clip(RoundedCornerShape(12.dp))
                         .clickable(onClick = onToggleCollapsed)
-                        .padding(horizontal = 4.dp)
+                        .testTag("collapsed_expand_btn")
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(statusDotColor)
-                    )
-                    Text(
-                        text = macroTitle,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = TextPrimary,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.widthIn(max = 110.dp)
-                    )
-                }
-
-                IconButton(
-                    onClick = onOpenQuickType,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .testTag("collapsed_quick_type_btn")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Keyboard,
-                        contentDescription = stringResource(R.string.dual_quick_type_open),
-                        tint = ElectricCyan
-                    )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .clip(CircleShape)
+                                .background(statusDotColor)
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Icon(
+                            imageVector = Icons.Default.DragIndicator,
+                            contentDescription = "Expand macro bar",
+                            tint = TextSecondary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                 }
 
                 IconButton(
@@ -215,6 +207,21 @@ fun FloatingSelectedMacroBar(
                         imageVector = if (isRunning) Icons.Default.Stop else Icons.Default.PlayArrow,
                         contentDescription = if (isRunning) "Stop macro" else "Start macro",
                         tint = if (isRunning) RoseAlert else EmeraldRun
+                    )
+                }
+
+                IconButton(
+                    onClick = onToggleManualCombat,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (atkActive) AmberLogic.copy(alpha = 0.22f) else Color.Transparent)
+                        .testTag("collapsed_attack_btn")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SportsKabaddi,
+                        contentDescription = if (atkActive) "Stop attack" else "Start attack",
+                        tint = if (atkActive) AmberLogic else TextSecondary
                     )
                 }
             }

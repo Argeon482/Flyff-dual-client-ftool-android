@@ -53,6 +53,9 @@ class DualWebInputBridge {
     private val _isActive = MutableStateFlow(false)
     val isActive: StateFlow<Boolean> = _isActive.asStateFlow()
 
+    @Volatile
+    private var account1TypingActive: Boolean = false
+
     fun attach(delegate: DualWebMacroDelegate) {
         this.delegate = delegate
         _isActive.value = true
@@ -61,9 +64,16 @@ class DualWebInputBridge {
     fun detach(delegate: DualWebMacroDelegate) {
         if (this.delegate === delegate) {
             this.delegate = null
+            this.account1TypingActive = false
             _isActive.value = false
         }
     }
+
+    fun setAccount1TypingActive(active: Boolean) {
+        account1TypingActive = active
+    }
+
+    fun isAccount1TypingActive(): Boolean = account1TypingActive
 
     fun isRoutingActive(): Boolean = delegate != null
 
@@ -85,6 +95,11 @@ class DualWebInputBridge {
         metaState: Int,
         targetOverride: WebViewTarget = WebViewTarget.DEFAULT
     ): Boolean {
+        if (account1TypingActive) {
+            val targetsAccount1 = targetOverride == WebViewTarget.ACCOUNT_1 ||
+                (targetOverride == WebViewTarget.DEFAULT && currentLayoutMode() == DualLayoutMode.SINGLE_ACCT_1)
+            if (targetsAccount1) return false
+        }
         return delegate?.dispatchKey(keyCode, holdMs, metaState, targetOverride) ?: false
     }
 

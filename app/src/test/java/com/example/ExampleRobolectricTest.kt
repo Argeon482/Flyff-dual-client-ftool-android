@@ -37,6 +37,7 @@ import com.example.flyff.LayoutHudCalibration
 import com.example.flyff.RectSpec
 import com.example.flyff.ScannedSkillKey
 import com.example.flyff.SkillCategory
+import com.example.flyff.SmartEnginePhase
 import com.example.flyff.SmartFlyffEngine
 import com.example.flyff.TaskbarGroupKey
 import com.example.flyff.VitalTriggerRule
@@ -1730,6 +1731,373 @@ class ExampleRobolectricTest {
         bridge.detach(delegate)
         frame.recycle()
         repo.deleteTemplate(missingTpl.id)
+        db.close()
+    }
+
+    @Test
+    fun flyffVisionAnalyzer_detectsRealChatAndResurrectionDialogsWithoutFalsePositives() {
+        val dir = java.io.File("../public/assets/aistudio")
+        if (!dir.exists()) return
+
+        // 1. A1 Full: Chat open + Android soft keyboard open (pitch-black top box + tabs)
+        val f073809 = java.io.File(dir, "Screenshot_20261122_073809_Flyff_Ftools_45016b38.jpg")
+        if (f073809.exists()) {
+            val bmp = BitmapFactory.decodeFile(f073809.absolutePath)!!
+            val fullPane = Rect(0, 0, bmp.width, bmp.height)
+            assertTrue("073809 (A1 Full Chat+Keyboard) MUST detect chat open", FlyffVisionAnalyzer.detectFlyffChatOpenInPane(bmp, fullPane))
+            assertFalse("073809 MUST NOT falsely trigger Resurrection dialog", FlyffVisionAnalyzer.detectFlyffResurrectionDialog(bmp, fullPane))
+            bmp.recycle()
+        }
+
+        // 2. A1 Full: Chat open, keyboard closed (bottom dark input bar + lime-green Send pill + tabs)
+        val f073804 = java.io.File(dir, "Screenshot_20261122_073804_Flyff_Ftools_3d7e3b59.jpg")
+        if (f073804.exists()) {
+            val bmp = BitmapFactory.decodeFile(f073804.absolutePath)!!
+            val fullPane = Rect(0, 0, bmp.width, bmp.height)
+            assertTrue("073804 (A1 Full Chat, no keyboard) MUST detect chat open", FlyffVisionAnalyzer.detectFlyffChatOpenInPane(bmp, fullPane))
+            assertFalse("073804 MUST NOT falsely trigger Resurrection dialog", FlyffVisionAnalyzer.detectFlyffResurrectionDialog(bmp, fullPane))
+            bmp.recycle()
+        }
+
+        // 3. 50/50 Split: Chat open on A1 (bottom pane) + keyboard open; A2 (top pane) normal
+        val f073751 = java.io.File(dir, "Screenshot_20261122_073751_Flyff_Ftools_b6fda41b.jpg")
+        if (f073751.exists()) {
+            val bmp = BitmapFactory.decodeFile(f073751.absolutePath)!!
+            val a2Pane = Rect(0, 0, bmp.width, bmp.height / 2)
+            val a1Pane = Rect(0, bmp.height / 2, bmp.width, bmp.height)
+            assertTrue("073751 (Split A1 Chat+Keyboard) MUST detect A1 chat open", FlyffVisionAnalyzer.detectFlyffChatOpenInPane(bmp, a1Pane))
+            assertFalse("073751 (Split A2 normal) MUST NOT detect A2 chat open", FlyffVisionAnalyzer.detectFlyffChatOpenInPane(bmp, a2Pane))
+            assertFalse("073751 MUST NOT falsely trigger Resurrection dialog on A1", FlyffVisionAnalyzer.detectFlyffResurrectionDialog(bmp, a1Pane))
+            bmp.recycle()
+        }
+
+        // 4. 50/50 Split: Chat open on A1 (bottom pane), keyboard closed; A2 (top pane) normal
+        val f073744 = java.io.File(dir, "Screenshot_20261122_073744_Flyff_Ftools_8be23e80.jpg")
+        if (f073744.exists()) {
+            val bmp = BitmapFactory.decodeFile(f073744.absolutePath)!!
+            val a2Pane = Rect(0, 0, bmp.width, bmp.height / 2)
+            val a1Pane = Rect(0, bmp.height / 2, bmp.width, bmp.height)
+            assertTrue("073744 (Split A1 Chat, no keyboard) MUST detect A1 chat open", FlyffVisionAnalyzer.detectFlyffChatOpenInPane(bmp, a1Pane))
+            assertFalse("073744 (Split A2 normal) MUST NOT detect A2 chat open", FlyffVisionAnalyzer.detectFlyffChatOpenInPane(bmp, a2Pane))
+            assertFalse("073744 MUST NOT falsely trigger Resurrection dialog on A1", FlyffVisionAnalyzer.detectFlyffResurrectionDialog(bmp, a1Pane))
+            bmp.recycle()
+        }
+
+        // 5. 50/50 Split: A1 (bottom pane) DEAD (Resurrection dialog + HP 0%), A2 (top pane) alive
+        val f073915 = java.io.File(dir, "Screenshot_20261122_073915_Flyff_Ftools_ee8789ba.jpg")
+        if (f073915.exists()) {
+            val bmp = BitmapFactory.decodeFile(f073915.absolutePath)!!
+            val a2Pane = Rect(0, 0, bmp.width, bmp.height / 2)
+            val a1Pane = Rect(0, bmp.height / 2, bmp.width, bmp.height)
+            assertTrue("073915 (Split A1 Dead) MUST detect Resurrection dialog on A1", FlyffVisionAnalyzer.detectFlyffResurrectionDialog(bmp, a1Pane))
+            assertFalse("073915 (Split A1 Dead) MUST NOT falsely detect chat open", FlyffVisionAnalyzer.detectFlyffChatOpenInPane(bmp, a1Pane))
+            assertFalse("073915 (Split A2 Alive) MUST NOT falsely detect Resurrection dialog on A2", FlyffVisionAnalyzer.detectFlyffResurrectionDialog(bmp, a2Pane))
+            val a1Hud = FlyffVisionAnalyzer.autoDetectMobileHudBars(bmp, a1Pane, WebViewTarget.ACCOUNT_1)
+            val a1Hp = FlyffVisionAnalyzer.measureBarFillPercent(bmp, a1Hud.hpBar!!)
+            assertEquals("073915 dead A1 HP bar must read 0%", 0, a1Hp)
+            bmp.recycle()
+        }
+
+        // 6. A1 Full: DEAD (Resurrection dialog + HP 0%)
+        val f073941 = java.io.File(dir, "Screenshot_20261122_073941_Flyff_Ftools_67086684.jpg")
+        if (f073941.exists()) {
+            val bmp = BitmapFactory.decodeFile(f073941.absolutePath)!!
+            val fullPane = Rect(0, 0, bmp.width, bmp.height)
+            assertTrue("073941 (A1 Full Dead) MUST detect Resurrection dialog", FlyffVisionAnalyzer.detectFlyffResurrectionDialog(bmp, fullPane))
+            assertFalse("073941 (A1 Full Dead) MUST NOT falsely detect chat open", FlyffVisionAnalyzer.detectFlyffChatOpenInPane(bmp, fullPane))
+            val a1Hud = FlyffVisionAnalyzer.autoDetectMobileHudBars(bmp, fullPane, WebViewTarget.ACCOUNT_1)
+            val a1Hp = FlyffVisionAnalyzer.measureBarFillPercent(bmp, a1Hud.hpBar!!)
+            assertEquals("073941 dead A1 HP bar must read 0%", 0, a1Hp)
+            bmp.recycle()
+        }
+
+        // 7. 50/50 Split Normal Live Gameplay: NO false positives for Chat OR Resurrection
+        val f090341 = java.io.File(dir, "Screenshot_20261121_090341_ShizuMacro_62e243ba.jpg")
+        if (f090341.exists()) {
+            val bmp = BitmapFactory.decodeFile(f090341.absolutePath)!!
+            val a2Pane = Rect(0, 0, bmp.width, bmp.height / 2)
+            val a1Pane = Rect(0, bmp.height / 2, bmp.width, bmp.height)
+            assertFalse("090341 normal A1 MUST NOT trigger Chat", FlyffVisionAnalyzer.detectFlyffChatOpenInPane(bmp, a1Pane))
+            assertFalse("090341 normal A2 MUST NOT trigger Chat", FlyffVisionAnalyzer.detectFlyffChatOpenInPane(bmp, a2Pane))
+            assertFalse("090341 normal A1 MUST NOT trigger Resurrection", FlyffVisionAnalyzer.detectFlyffResurrectionDialog(bmp, a1Pane))
+            assertFalse("090341 normal A2 MUST NOT trigger Resurrection", FlyffVisionAnalyzer.detectFlyffResurrectionDialog(bmp, a2Pane))
+            bmp.recycle()
+        }
+    }
+
+    @Test
+    fun smartFlyffEngine_startupBuffSweepChatPauseAndDeathReviveRebuff() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        val repo = MacroRepository(context, db.macroDao())
+
+        val w = 900
+        val h = 1600
+
+        // Create two distinct 24x20 buff icon templates
+        val buffUpBmp = Bitmap.createBitmap(24, 20, Bitmap.Config.ARGB_8888)
+        fillBitmapRect(buffUpBmp, 0, 0, 24, 20, Color.rgb(30, 180, 240))
+        fillBitmapRect(buffUpBmp, 6, 4, 18, 16, Color.rgb(255, 240, 80))
+        val buffUpTpl = repo.saveTemplateBitmap("ActiveHeapUp", buffUpBmp)
+
+        val buffMissingBmp = Bitmap.createBitmap(24, 20, Bitmap.Config.ARGB_8888)
+        fillBitmapRect(buffMissingBmp, 0, 0, 24, 20, Color.rgb(210, 45, 195))
+        fillBitmapRect(buffMissingBmp, 5, 5, 19, 15, Color.rgb(90, 255, 160))
+        val buffMissingTpl = repo.saveTemplateBitmap("MissingHaste", buffMissingBmp)
+
+        val a1HpPct = java.util.concurrent.atomic.AtomicInteger(100)
+        val a2MpPct = java.util.concurrent.atomic.AtomicInteger(100)
+        val showBuffUp = java.util.concurrent.atomic.AtomicBoolean(true)
+        val showBuffMissing = java.util.concurrent.atomic.AtomicBoolean(false)
+        val showResDialog = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        fun buildFrame(): Bitmap {
+            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            fillBitmapRect(bmp, 0, 0, w, h, Color.rgb(180, 190, 200))
+            // A2 top pane
+            fillBitmapRect(bmp, 12, 12, 290, 108, Color.rgb(34, 38, 46))
+            drawFlyffVitalBar(bmp, 104, 28, 280, 42, 100, VitalType.HP)
+            drawFlyffVitalBar(bmp, 104, 50, 280, 64, a2MpPct.get(), VitalType.MP)
+            drawFlyffVitalBar(bmp, 104, 72, 280, 86, 100, VitalType.FP)
+
+            // A1 bottom pane
+            fillBitmapRect(bmp, 12, 812, 290, 908, Color.rgb(34, 38, 46))
+            drawFlyffVitalBar(bmp, 104, 828, 280, 842, a1HpPct.get(), VitalType.HP)
+            drawFlyffVitalBar(bmp, 104, 850, 280, 864, 100, VitalType.MP)
+            drawFlyffVitalBar(bmp, 104, 872, 280, 886, 100, VitalType.FP)
+
+            // A1 active buff panel (y=920..1020)
+            fillBitmapRect(bmp, 16, 920, 280, 1020, Color.rgb(26, 30, 38))
+            val canvas = Canvas(bmp)
+            if (showBuffUp.get()) {
+                canvas.drawBitmap(buffUpBmp, 24f, 928f, null)
+            }
+            if (showBuffMissing.get()) {
+                canvas.drawBitmap(buffMissingBmp, 64f, 928f, null)
+            }
+
+            // Optional Resurrection dialog inside A1 pane (y=800..1600, W=900)
+            if (showResDialog.get()) {
+                val dlgLeft = (w * 0.41f).toInt()
+                val dlgRight = (w * 0.59f).toInt()
+                val dlgTop = 800 + (w * 0.055f).toInt()
+                val dlgBot = 800 + (w * 0.255f).toInt()
+                // Cream parchment background
+                fillBitmapRect(bmp, dlgLeft, dlgTop, dlgRight, dlgBot, Color.rgb(235, 224, 198))
+                // 4 stacked golden-yellow buttons separated by cream gaps
+                for (btnIdx in 0 until 4) {
+                    val bt = dlgTop + 14 + btnIdx * 38
+                    val bb = bt + 24
+                    fillBitmapRect(bmp, dlgLeft + 10, bt, dlgRight - 10, bb, Color.rgb(225, 180, 50))
+                }
+            }
+            return bmp
+        }
+
+        val testDetector = object : ScreenDetector(context) {
+            init { _isActive.value = true }
+            override suspend fun captureLatestBitmap(): Bitmap = buildFrame()
+        }
+
+        val dispatched = java.util.Collections.synchronizedList(mutableListOf<Pair<WebViewTarget, Int>>())
+        val bridge = DualWebInputBridge()
+        val delegate = object : DualWebMacroDelegate {
+            override fun dispatchKey(keyCode: Int, holdMs: Long, metaState: Int, targetOverride: WebViewTarget): Boolean {
+                dispatched.add(targetOverride to keyCode)
+                return true
+            }
+            override fun dispatchTap(screenX: Float, screenY: Float, holdMs: Long, jitterPx: Int, targetOverride: WebViewTarget) = true
+            override fun dispatchSwipe(startX: Float, startY: Float, endX: Float, endY: Float, durationMs: Long, steps: Int, targetOverride: WebViewTarget) = true
+            override fun describeTarget(targetOverride: WebViewTarget) = targetOverride.shortLabel
+            override fun currentLayoutMode() = DualLayoutMode.SPLIT_50_50
+            override fun currentPaneRects() = Rect(0, 800, w, h) to Rect(0, 0, w, 800)
+        }
+        bridge.attach(delegate)
+
+        val healKey = ScannedSkillKey(id = "k-heal", owner = WebViewTarget.ACCOUNT_2, label = "Heal", category = SkillCategory.HEAL, keyCode = KeyEvent.KEYCODE_1, keyLabel = "1")
+        val a2MpKey = ScannedSkillKey(id = "k-a2mp", owner = WebViewTarget.ACCOUNT_2, label = "RM MP", category = SkillCategory.MP_POT, keyCode = KeyEvent.KEYCODE_2, keyLabel = "2")
+        val buffUpKey = ScannedSkillKey(id = "k-heap", owner = WebViewTarget.ACCOUNT_2, label = "Heap Up", category = SkillCategory.PARTY_BUFF, keyCode = KeyEvent.KEYCODE_4, keyLabel = "4")
+        val buffMissingKey = ScannedSkillKey(id = "k-haste", owner = WebViewTarget.ACCOUNT_2, label = "Haste", category = SkillCategory.PARTY_BUFF, keyCode = KeyEvent.KEYCODE_5, keyLabel = "5")
+        val atkKey = ScannedSkillKey(id = "k-atk", owner = WebViewTarget.ACCOUNT_1, label = "Psychic Bomb", category = SkillCategory.ATTACK_AOE, keyCode = KeyEvent.KEYCODE_9, keyLabel = "9")
+
+        val buffUpDef = ActiveBuffDefinition(
+            id = "b-heap",
+            targetChar = WebViewTarget.ACCOUNT_1,
+            label = "Heap Up",
+            perLayoutTemplateIds = mapOf(DualLayoutMode.SPLIT_50_50 to buffUpTpl.id)
+        )
+        val buffMissingDef = ActiveBuffDefinition(
+            id = "b-haste",
+            targetChar = WebViewTarget.ACCOUNT_1,
+            label = "Haste",
+            perLayoutTemplateIds = mapOf(DualLayoutMode.SPLIT_50_50 to buffMissingTpl.id)
+        )
+
+        val a1Hud = CharacterHudRegions(
+            owner = WebViewTarget.ACCOUNT_1,
+            paneRect = RectSpec.fromPixels(0, 800, w, h, w, h),
+            hpBar = BarCalibrationSpec(VitalType.HP, RectSpec.fromPixels(104, 828, 280, 842, w, h)),
+            mpBar = BarCalibrationSpec(VitalType.MP, RectSpec.fromPixels(104, 850, 280, 864, w, h)),
+            fpBar = BarCalibrationSpec(VitalType.FP, RectSpec.fromPixels(104, 872, 280, 886, w, h)),
+            buffGridRegion = RectSpec.fromPixels(16, 920, 280, 1020, w, h)
+        )
+        val a2Hud = CharacterHudRegions(
+            owner = WebViewTarget.ACCOUNT_2,
+            paneRect = RectSpec.fromPixels(0, 0, w, 800, w, h),
+            hpBar = BarCalibrationSpec(VitalType.HP, RectSpec.fromPixels(104, 28, 280, 42, w, h)),
+            mpBar = BarCalibrationSpec(VitalType.MP, RectSpec.fromPixels(104, 50, 280, 64, w, h)),
+            fpBar = BarCalibrationSpec(VitalType.FP, RectSpec.fromPixels(104, 72, 280, 86, w, h)),
+            buffGridRegion = RectSpec.fromPixels(16, 120, 280, 220, w, h)
+        )
+
+        val profile = FlyffProfile(
+            name = "Full Lifecycle Test",
+            pollingIntervalMs = 30L,
+            buffScanIntervalMs = 600L,
+            minBuffRecastSec = 480, // 8-minute wait after initial sweep
+            skillKeys = listOf(healKey, a2MpKey, buffUpKey, buffMissingKey, atkKey),
+            activeBuffs = listOf(buffUpDef, buffMissingDef),
+            buffLinks = listOf(
+                BuffKeyLink(id = "l-heap", skillKeyId = buffUpKey.id, activeBuffId = buffUpDef.id, priority = 0, castGuardMs = 150L),
+                BuffKeyLink(id = "l-haste", skillKeyId = buffMissingKey.id, activeBuffId = buffMissingDef.id, priority = 1, castGuardMs = 150L)
+            ),
+            layouts = mapOf(
+                DualLayoutMode.SPLIT_50_50 to LayoutHudCalibration(
+                    layoutMode = DualLayoutMode.SPLIT_50_50,
+                    screenWidth = w,
+                    screenHeight = h,
+                    charHuds = mapOf(WebViewTarget.ACCOUNT_1 to a1Hud, WebViewTarget.ACCOUNT_2 to a2Hud)
+                )
+            ),
+            healRule = HealRuleConfig(
+                enabled = true,
+                targetChar = WebViewTarget.ACCOUNT_1,
+                healSkillKeyId = healKey.id,
+                triggerBelowPct = 80,
+                safeBuffMinHpPct = 85,
+                postHealStabilizeChecks = 1,
+                healCadenceMs = 60L
+            ),
+            vitalTriggers = listOf(
+                VitalTriggerRule(
+                    id = "vt-a2mp",
+                    targetChar = WebViewTarget.ACCOUNT_2,
+                    vitalType = VitalType.MP,
+                    triggerBelowPct = 50,
+                    skillKeyId = a2MpKey.id,
+                    cooldownMs = 120L
+                )
+            ),
+            combatConfig = CombatRotationConfig(
+                enabled = true,
+                manualCombatEnabled = true,
+                attackSkillKeyIds = listOf(atkKey.id),
+                attackIntervalMs = 60L
+            )
+        )
+
+        val engine = SmartFlyffEngine(repo, testDetector, bridge, BuffTimerOcrReader())
+        engine.start(profile)
+
+        // STAGE 1: Startup Initial Buff Sweep — casts ONLY MissingHaste (KEYCODE_5), NEVER ActiveHeapUp (KEYCODE_4)
+        var waited = 0
+        while (waited < 40 && dispatched.none { it == (WebViewTarget.ACCOUNT_2 to KeyEvent.KEYCODE_5) }) {
+            delay(50L)
+            waited++
+        }
+        assertTrue(
+            "Startup sweep MUST cast missing buff Haste (KEYCODE_5), fired=$dispatched",
+            dispatched.any { it == (WebViewTarget.ACCOUNT_2 to KeyEvent.KEYCODE_5) }
+        )
+        assertEquals(
+            "Startup sweep MUST NOT cast already-active Heap Up (KEYCODE_4)",
+            0,
+            dispatched.count { it == (WebViewTarget.ACCOUNT_2 to KeyEvent.KEYCODE_4) }
+        )
+
+        // Now paint Haste on screen -> sweep completes and enters 8-minute wait!
+        showBuffMissing.set(true)
+        delay(550L)
+        dispatched.clear()
+        // Even if Haste disappears immediately after sweep completes, ZERO buff replacement casts should fire during the 8-min wait!
+        showBuffMissing.set(false)
+        delay(500L)
+        assertEquals(
+            "During 8-min post-sweep wait, ZERO buff casts should fire, fired=$dispatched",
+            0,
+            dispatched.count { it.second == KeyEvent.KEYCODE_4 || it.second == KeyEvent.KEYCODE_5 }
+        )
+
+        // STAGE 2: Char 1 Chat / Typing Pause -> stops ONLY ACCOUNT_1 keys while RM (ACCOUNT_2) continues!
+        bridge.setAccount1TypingActive(true)
+        a2MpPct.set(25) // RM needs MP pot
+        delay(100L)
+        dispatched.clear()
+        delay(350L)
+        val chatFired = dispatched.toList()
+        assertEquals(
+            "When Char 1 is chatting/typing, ZERO ACCOUNT_1 keys may fire, fired=$chatFired",
+            0,
+            chatFired.count { it.first == WebViewTarget.ACCOUNT_1 }
+        )
+        assertTrue(
+            "When Char 1 is chatting/typing, RM (ACCOUNT_2) MUST continue firing MP pot, fired=$chatFired",
+            chatFired.any { it == (WebViewTarget.ACCOUNT_2 to KeyEvent.KEYCODE_2) }
+        )
+        bridge.setAccount1TypingActive(false)
+        a2MpPct.set(100)
+
+        // STAGE 3: Death full-stop -> ZERO keys for BOTH Char 1 AND RM!
+        a1HpPct.set(0)
+        a2MpPct.set(20) // RM wants MP pot, A1 wants Heal & Attack — ALL must be stopped!
+        showResDialog.set(true)
+        showBuffUp.set(false)
+        showBuffMissing.set(false)
+        var deadWait = 0
+        while (deadWait < 25 && engine.state.value.phase != SmartEnginePhase.DEAD_PAUSED) {
+            delay(40L)
+            deadWait++
+        }
+        assertEquals("Engine MUST enter DEAD_PAUSED when main char dies", SmartEnginePhase.DEAD_PAUSED, engine.state.value.phase)
+        dispatched.clear()
+        delay(350L)
+        assertTrue(
+            "While DEAD, ALL keys (both A1 & A2) MUST be stopped, fired=$dispatched",
+            dispatched.isEmpty()
+        )
+
+        // STAGE 4: Revive -> resets 8-minute lockout and immediately triggers full buff refresh sweep!
+        showResDialog.set(false)
+        a1HpPct.set(95)
+        a2MpPct.set(100)
+        dispatched.clear()
+        var reviveWait = 0
+        while (reviveWait < 40 && (
+                dispatched.none { it == (WebViewTarget.ACCOUNT_2 to KeyEvent.KEYCODE_4) } ||
+                    dispatched.none { it == (WebViewTarget.ACCOUNT_2 to KeyEvent.KEYCODE_5) }
+                )
+        ) {
+            delay(50L)
+            reviveWait++
+        }
+        val reviveFired = dispatched.toList()
+        assertTrue(
+            "After Revive, full buff sweep MUST cast Heap Up (KEYCODE_4), fired=$reviveFired",
+            reviveFired.any { it == (WebViewTarget.ACCOUNT_2 to KeyEvent.KEYCODE_4) }
+        )
+        assertTrue(
+            "After Revive, full buff sweep MUST cast Haste (KEYCODE_5), fired=$reviveFired",
+            reviveFired.any { it == (WebViewTarget.ACCOUNT_2 to KeyEvent.KEYCODE_5) }
+        )
+
+        engine.stop()
+        bridge.detach(delegate)
+        buffUpBmp.recycle()
+        buffMissingBmp.recycle()
+        repo.deleteTemplate(buffUpTpl.id)
+        repo.deleteTemplate(buffMissingTpl.id)
         db.close()
     }
 }
